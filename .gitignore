@@ -1,0 +1,29 @@
+# Compiled binary
+peaceful
+peaceful_waves
+
+# Object files
+*.o
+*.obj
+
+# Libraries
+*.a
+*.so
+*.dylib
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# Editor files
+.vscode/
+*.swp
+*.swo
+*~
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
