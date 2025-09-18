@@ -2,6 +2,8 @@
 
 A cross-platform OpenGL visualization that creates peaceful, meditative waves with floating orbs. Sometimes, code should just be beautiful.
 
+![Peaceful Waves](peaceful_snapshot.png)
+
 ## Building
 
 This project builds on Linux, macOS, Windows, and BSD systems. Simply run:

@@ -36,8 +36,19 @@ endif
 $(TARGET): $(SRC)
 	$(CC) $(CFLAGS) -o $(TARGET) $(SRC) $(LDFLAGS) $(LIBS)
 
+capture: capture_simple.c
+	$(CC) $(CFLAGS) -o capture capture_simple.c $(LDFLAGS) $(LIBS)
+
+capture-advanced: capture.c
+	$(CC) $(CFLAGS) -o capture capture.c $(LDFLAGS) -lGL -lGLEW -lglfw -lm
+
+demo-capture: capture
+	./capture_demo.sh
+
 clean:
-	rm -f $(TARGET) peaceful_waves
+	rm -f $(TARGET) peaceful_waves capture
+	rm -rf frames
+	rm -f peaceful_waves.gif peaceful_waves_small.gif peaceful_snapshot.png
 
 run: $(TARGET)
 	./$(TARGET)
@@ -45,4 +56,4 @@ run: $(TARGET)
 style:
 	clang-format -style="{BasedOnStyle: Google, IndentWidth: 4}" -i $(SRC)
 
-.PHONY: clean run style
+.PHONY: clean run style capture demo-capture

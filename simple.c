@@ -1,10 +1,10 @@
 #ifdef _WIN32
-    #include <windows.h>
-    #include <GL/gl.h>
+#include <GL/gl.h>
+#include <windows.h>
 #elif defined(__APPLE__)
-    #include <OpenGL/gl.h>
+#include <OpenGL/gl.h>
 #else
-    #include <GL/gl.h>
+#include <GL/gl.h>
 #endif
 #include <GLFW/glfw3.h>
 #include <math.h>
