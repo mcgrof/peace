@@ -2,7 +2,7 @@
 
 A cross-platform OpenGL visualization that creates peaceful, meditative waves with floating orbs. Sometimes, code should just be beautiful.
 
-![Peaceful Waves](peaceful_snapshot.png)
+![Peaceful Waves](peaceful_waves.gif)
 
 ## Building
 
