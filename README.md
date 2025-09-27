@@ -1,8 +1,16 @@
 # Peace
 
-A cross-platform OpenGL visualization that creates peaceful, meditative waves with floating orbs. Sometimes, code should just be beautiful.
+A cross-platform OpenGL visualization that creates peaceful, meditative waves with floating orbs. Sometimes, code should just be beautiful. Now with zoom capabilities inspired by Claude Code's visualization!
 
 ![Peaceful Waves](peaceful_waves.gif)
+
+## Features
+
+- **Full-screen immersive ocean waves** with multiple animated layers
+- **Beautiful color gradients** transitioning from deep ocean blues to sunset peaches and lavenders
+- **Floating glowing orbs** that drift peacefully across the scene
+- **Interactive zoom** - scroll your mouse wheel to zoom in and out of the wave field
+- **Shimmer effects** creating realistic water surface reflections
 
 ## Building
 
@@ -21,14 +29,20 @@ make
 
 ## Running
 
+For the best experience with zoom and full-screen waves:
+```bash
+gcc -Wall -O2 -o waves waves.c -lGL -lglfw -lm && ./waves
+```
+
+Or run the original version:
 ```bash
 make run
 ```
 
-Or directly:
-```bash
-./peaceful
-```
+### Controls
+
+- **Mouse scroll up**: Zoom in
+- **Mouse scroll down**: Zoom out
 
 ## A Poem About This Code
 
