@@ -15,46 +15,71 @@ float clickX = 0.0f;
 float clickY = 0.0f;
 float clickTime = -10.0f;
 int mousePressed = 0;
+float rightClickX = 0.0f;
+float rightClickY = 0.0f;
+float rightClickTime = -10.0f;
+int rightMousePressed = 0;
 float aspectRatio = 4.0f / 3.0f;
 
 void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
     zoom += (float)yoffset * 0.1f;
-    if (zoom < 0.5f) zoom = 0.5f;
+    if (zoom < 0.8f) zoom = 0.8f;
     if (zoom > 3.0f) zoom = 3.0f;
 }
 
 void mouse_button_callback(GLFWwindow* window, int button, int action, int mods) {
+    double xpos, ypos;
+    glfwGetCursorPos(window, &xpos, &ypos);
+
+    int width, height;
+    glfwGetFramebufferSize(window, &width, &height);
+
+    // Convert pixel coordinates to OpenGL world coordinates
+    // Account for aspect ratio in projection
+    float aspect = (float)width / (float)height;
+    float worldX = ((xpos / width) * 2.0f - 1.0f) * aspect * zoom;
+    float worldY = -((ypos / height) * 2.0f - 1.0f) * zoom;
+
     if (button == GLFW_MOUSE_BUTTON_LEFT) {
         if (action == GLFW_PRESS) {
-            double xpos, ypos;
-            glfwGetCursorPos(window, &xpos, &ypos);
-
-            int width, height;
-            glfwGetFramebufferSize(window, &width, &height);
-
-            // Convert pixel coordinates to OpenGL world coordinates
-            // Account for aspect ratio in projection
-            float aspect = (float)width / (float)height;
-            clickX = ((xpos / width) * 2.0f - 1.0f) * aspect * zoom;
-            clickY = -((ypos / height) * 2.0f - 1.0f) * zoom;
+            clickX = worldX;
+            clickY = worldY;
             clickTime = glfwGetTime();
             mousePressed = 1;
         } else if (action == GLFW_RELEASE) {
             mousePressed = 0;
         }
+    } else if (button == GLFW_MOUSE_BUTTON_RIGHT) {
+        if (action == GLFW_PRESS) {
+            rightClickX = worldX;
+            rightClickY = worldY;
+            rightClickTime = glfwGetTime();
+            rightMousePressed = 1;
+        } else if (action == GLFW_RELEASE) {
+            rightMousePressed = 0;
+        }
     }
 }
 
 void cursor_position_callback(GLFWwindow* window, double xpos, double ypos) {
-    if (mousePressed) {
-        int width, height;
-        glfwGetFramebufferSize(window, &width, &height);
+    int width, height;
+    glfwGetFramebufferSize(window, &width, &height);
 
-        // Update position continuously while dragging
-        float aspect = (float)width / (float)height;
-        clickX = ((xpos / width) * 2.0f - 1.0f) * aspect * zoom;
-        clickY = -((ypos / height) * 2.0f - 1.0f) * zoom;
+    // Update position continuously while dragging
+    float aspect = (float)width / (float)height;
+    float worldX = ((xpos / width) * 2.0f - 1.0f) * aspect * zoom;
+    float worldY = -((ypos / height) * 2.0f - 1.0f) * zoom;
+
+    if (mousePressed) {
+        clickX = worldX;
+        clickY = worldY;
         // Don't reset clickTime to keep the effect continuous
+    }
+
+    if (rightMousePressed) {
+        rightClickX = worldX;
+        rightClickY = worldY;
+        // Don't reset rightClickTime to keep the effect continuous
     }
 }
 
@@ -128,10 +153,31 @@ int main() {
                 float dy = layerOffset - clickY;
                 float dist = sqrt(dx * dx + dy * dy);
 
+                // Right mouse freezing effect
+                float rightDx = x * aspectRatio * zoom - rightClickX;
+                float rightDy = layerOffset - rightClickY;
+                float rightDist = sqrt(rightDx * rightDx + rightDy * rightDy);
+
+                float timeSinceRightClick = time - rightClickTime;
+                float freezeFactor = 1.0f;
+
+                if ((rightMousePressed || timeSinceRightClick < 3.0f) && rightDist < 0.5f) {
+                    // Freeze/slow waves near right click
+                    float freezeStrength = (1.0f - rightDist / 0.5f);
+                    if (!rightMousePressed) {
+                        freezeStrength *= (1.0f - timeSinceRightClick / 3.0f);
+                    }
+                    freezeFactor = 1.0f - freezeStrength * 0.9f;
+
+                    // Add crystalline patterns
+                    float crystalPattern = sin(x * 30.0f) * cos(dy * 30.0f) * freezeStrength * 0.05f;
+                    wave += crystalPattern;
+                }
+
                 float timeSinceClick = time - clickTime;
                 if (timeSinceClick >= 0.0f && timeSinceClick < 5.0f) {
-                    // Create expanding ripples
-                    float rippleSpeed = 3.0f;
+                    // Create expanding ripples (affected by freeze)
+                    float rippleSpeed = 3.0f * freezeFactor;
                     float rippleRadius = timeSinceClick * rippleSpeed;
                     float rippleWidth = 0.3f;
 
@@ -141,27 +187,27 @@ int main() {
                         float ringDist = fabs(dist - (rippleRadius - ringOffset));
                         if (ringDist < rippleWidth) {
                             float rippleStrength = (1.0f - ringDist / rippleWidth) * (1.0f - timeSinceClick / 5.0f);
-                            wave += sin(dist * 10.0f - time * 5.0f) * rippleStrength * 0.3f;
+                            wave += sin(dist * 10.0f - time * 5.0f * freezeFactor) * rippleStrength * 0.3f * freezeFactor;
                         }
                     }
                 }
 
                 // Add vortex/whirlpool effect when mouse is held down
                 if (mousePressed && dist < 1.0f) {
-                    float vortexStrength = (1.0f - dist) * 0.5f;
+                    float vortexStrength = (1.0f - dist) * 0.5f * freezeFactor;
                     float angle = atan2(dy, dx);
 
-                    // Swirling motion
-                    wave += sin(angle * 5.0f + time * 10.0f - dist * 20.0f) * vortexStrength;
+                    // Swirling motion (slowed by freeze)
+                    wave += sin(angle * 5.0f + time * 10.0f * freezeFactor - dist * 20.0f) * vortexStrength;
 
                     // Pulling effect toward center
                     wave -= dist * vortexStrength * 0.3f;
 
-                    // Add chaotic turbulence
-                    wave += sin(x * 50.0f + time * 20.0f) * cos(dy * 50.0f) * vortexStrength * 0.2f;
+                    // Add chaotic turbulence (reduced when frozen)
+                    wave += sin(x * 50.0f + time * 20.0f * freezeFactor) * cos(dy * 50.0f) * vortexStrength * 0.2f;
 
                     // Pulsing effect
-                    wave *= 1.0f + sin(time * 15.0f) * vortexStrength * 0.3f;
+                    wave *= 1.0f + sin(time * 15.0f * freezeFactor) * vortexStrength * 0.3f;
                 }
 
                 float y = layerOffset + wave;
@@ -308,6 +354,81 @@ int main() {
                 glVertex2f(x, y);
             }
             glEnd();
+        }
+
+        // Draw crystal/ice formation effect for right mouse button
+        float timeSinceRightClick = time - rightClickTime;
+        if (rightMousePressed || (timeSinceRightClick >= 0.0f && timeSinceRightClick < 4.0f)) {
+            // Draw growing ice crystals
+            float growthFactor = rightMousePressed ? 1.0f : (1.0f - timeSinceRightClick / 4.0f);
+
+            // Main crystal branches (6-fold symmetry like snowflakes)
+            for (int branch = 0; branch < 6; branch++) {
+                float baseAngle = branch * 3.14159f / 3.0f + time * 0.5f;
+
+                // Main branch
+                for (int seg = 0; seg < 10; seg++) {
+                    float segDist = seg * 0.04f * growthFactor;
+                    float segX = rightClickX + cos(baseAngle) * segDist;
+                    float segY = rightClickY + sin(baseAngle) * segDist;
+
+                    // Ice blue gradient
+                    float intensity = (1.0f - seg / 10.0f) * growthFactor;
+                    glBegin(GL_TRIANGLE_FAN);
+                    glColor4f(0.7f, 0.9f, 1.0f, intensity * 0.8f);
+                    glVertex2f(segX, segY);
+                    for (int j = 0; j <= 6; j++) {
+                        float a = j * 2.0f * 3.14159f / 6.0f;
+                        float size = (0.02f - seg * 0.001f) * growthFactor;
+                        glColor4f(0.5f, 0.8f, 1.0f, intensity * 0.3f);
+                        glVertex2f(segX + cos(a) * size, segY + sin(a) * size);
+                    }
+                    glEnd();
+
+                    // Sub-branches
+                    if (seg > 2 && seg % 2 == 0) {
+                        for (int side = -1; side <= 1; side += 2) {
+                            float subAngle = baseAngle + side * 3.14159f / 6.0f;
+                            for (int subseg = 0; subseg < 5; subseg++) {
+                                float subDist = subseg * 0.02f * growthFactor;
+                                float subX = segX + cos(subAngle) * subDist;
+                                float subY = segY + sin(subAngle) * subDist;
+
+                                glBegin(GL_TRIANGLE_FAN);
+                                float subIntensity = intensity * (1.0f - subseg / 5.0f);
+                                glColor4f(0.8f, 0.95f, 1.0f, subIntensity * 0.6f);
+                                glVertex2f(subX, subY);
+                                for (int j = 0; j <= 4; j++) {
+                                    float a = j * 2.0f * 3.14159f / 4.0f;
+                                    float size = 0.008f * growthFactor;
+                                    glVertex2f(subX + cos(a) * size, subY + sin(a) * size);
+                                }
+                                glEnd();
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Frost particles around the crystal
+            if (rightMousePressed) {
+                for (int p = 0; p < 20; p++) {
+                    float angle = p * 3.14159f * 2.0f / 20.0f;
+                    float dist = sin(time * 3.0f + p * 0.5f) * 0.15f + 0.1f;
+                    float px = rightClickX + cos(angle) * dist;
+                    float py = rightClickY + sin(angle) * dist;
+
+                    glBegin(GL_POINTS);
+                    glPointSize(3.0f);
+                    float twinkle = sin(time * 10.0f + p * 2.0f) * 0.5f + 0.5f;
+                    glColor4f(0.9f, 0.95f, 1.0f, twinkle * 0.7f);
+                    glVertex2f(px, py);
+                    glEnd();
+                }
+            }
+
+            // Freezing effect on waves (modify nearby wave behavior)
+            // This is handled in the wave rendering loop above
         }
 
         // Debug: Draw a small marker at the mouse click position
