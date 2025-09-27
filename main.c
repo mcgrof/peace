@@ -1,38 +1,58 @@
-#include <GL/glew.h>
+#define GL_GLEXT_PROTOTYPES
 #include <GLFW/glfw3.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
 
+float zoomLevel = 1.0f;
+
 const char* vertexShaderSource = "#version 330 core\n"
     "layout (location = 0) in vec3 aPos;\n"
-    "out vec3 FragPos;\n"
-    "uniform float time;\n"
+    "out vec2 TexCoord;\n"
+    "uniform float zoom;\n"
     "void main() {\n"
-    "   float wave = sin(aPos.x * 3.0 + time) * 0.1;\n"
-    "   wave += sin(aPos.x * 5.0 - time * 0.8) * 0.05;\n"
-    "   vec3 pos = aPos;\n"
-    "   pos.y += wave;\n"
-    "   gl_Position = vec4(pos, 1.0);\n"
-    "   FragPos = pos;\n"
+    "   gl_Position = vec4(aPos.x, aPos.y, 0.0, 1.0);\n"
+    "   TexCoord = aPos.xy / zoom;\n"
     "}\n";
 
 const char* fragmentShaderSource = "#version 330 core\n"
     "out vec4 FragColor;\n"
-    "in vec3 FragPos;\n"
+    "in vec2 TexCoord;\n"
     "uniform float time;\n"
+    "uniform float zoom;\n"
     "void main() {\n"
-    "   float gradient = (FragPos.y + 1.0) * 0.5;\n"
+    "   vec2 pos = TexCoord;\n"
+    "   float wave = sin(pos.x * 3.0 + time) * 0.15;\n"
+    "   wave += sin(pos.x * 5.0 - time * 0.8) * 0.08;\n"
+    "   wave += sin(pos.x * 7.0 + time * 1.2) * 0.04;\n"
+    "   wave += sin(pos.x * 2.0 + pos.y * 4.0 + time * 0.5) * 0.05;\n"
+    "   float waveY = pos.y + wave;\n"
+    "   \n"
+    "   float gradient = (waveY + 1.0) * 0.5;\n"
+    "   vec3 deepBlue = vec3(0.1, 0.3, 0.6);\n"
     "   vec3 skyBlue = vec3(0.53, 0.81, 0.92);\n"
     "   vec3 lavender = vec3(0.9, 0.8, 1.0);\n"
     "   vec3 peach = vec3(1.0, 0.85, 0.7);\n"
-    "   vec3 color = mix(lavender, skyBlue, gradient);\n"
-    "   color = mix(color, peach, sin(time * 0.3) * 0.2 + 0.2);\n"
+    "   \n"
+    "   vec3 color = mix(deepBlue, skyBlue, gradient);\n"
+    "   color = mix(color, lavender, gradient * gradient);\n"
+    "   color = mix(color, peach, sin(time * 0.3 + pos.x * 0.5) * 0.15 + 0.15);\n"
+    "   \n"
+    "   // Add wave distortion to create flowing effect\n"
+    "   float intensity = 1.0 - smoothstep(-0.5, 0.5, abs(waveY));\n"
+    "   color = mix(color * 0.8, color * 1.2, intensity);\n"
+    "   \n"
     "   FragColor = vec4(color, 1.0);\n"
     "}\n";
 
 void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
     glViewport(0, 0, width, height);
+}
+
+void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
+    zoomLevel += (float)yoffset * 0.1f;
+    if (zoomLevel < 0.5f) zoomLevel = 0.5f;
+    if (zoomLevel > 3.0f) zoomLevel = 3.0f;
 }
 
 unsigned int compileShader(unsigned int type, const char* source) {
@@ -70,12 +90,7 @@ int main() {
 
     glfwMakeContextCurrent(window);
     glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
-
-    GLenum err = glewInit();
-    if (err != GLEW_OK) {
-        printf("Failed to initialize GLEW: %s\n", glewGetErrorString(err));
-        return -1;
-    }
+    glfwSetScrollCallback(window, scroll_callback);
 
     unsigned int vertexShader = compileShader(GL_VERTEX_SHADER, vertexShaderSource);
     unsigned int fragmentShader = compileShader(GL_FRAGMENT_SHADER, fragmentShaderSource);
@@ -88,28 +103,18 @@ int main() {
     glDeleteShader(vertexShader);
     glDeleteShader(fragmentShader);
 
+    // Create a simple full-screen quad
     float vertices[] = {
-        -1.0f, -0.3f, 0.0f,
-         1.0f, -0.3f, 0.0f,
-         1.0f,  0.3f, 0.0f,
-        -1.0f,  0.3f, 0.0f,
-        -1.0f, -0.5f, 0.0f,
-         1.0f, -0.5f, 0.0f,
-         1.0f,  0.1f, 0.0f,
-        -1.0f,  0.1f, 0.0f,
-        -1.0f, -0.7f, 0.0f,
-         1.0f, -0.7f, 0.0f,
-         1.0f, -0.1f, 0.0f,
-        -1.0f, -0.1f, 0.0f
+        // Full screen quad
+        -3.0f, -3.0f, 0.0f,
+         3.0f, -3.0f, 0.0f,
+         3.0f,  3.0f, 0.0f,
+        -3.0f,  3.0f, 0.0f
     };
 
     unsigned int indices[] = {
         0, 1, 2,
-        2, 3, 0,
-        4, 5, 6,
-        6, 7, 4,
-        8, 9, 10,
-        10, 11, 8
+        2, 3, 0
     };
 
     unsigned int VBO, VAO, EBO;
@@ -132,7 +137,7 @@ int main() {
     glBindVertexArray(0);
 
     while (!glfwWindowShouldClose(window)) {
-        glClearColor(0.95f, 0.95f, 0.98f, 1.0f);
+        glClearColor(0.1f, 0.2f, 0.3f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
 
         glUseProgram(shaderProgram);
@@ -141,8 +146,11 @@ int main() {
         int timeLoc = glGetUniformLocation(shaderProgram, "time");
         glUniform1f(timeLoc, timeValue);
 
+        int zoomLoc = glGetUniformLocation(shaderProgram, "zoom");
+        glUniform1f(zoomLoc, zoomLevel);
+
         glBindVertexArray(VAO);
-        glDrawElements(GL_TRIANGLES, 18, GL_UNSIGNED_INT, 0);
+        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
 
         glfwSwapBuffers(window);
         glfwPollEvents();

@@ -9,7 +9,7 @@ endif
 CC = gcc
 CFLAGS = -Wall -O2
 TARGET = peaceful
-SRC = simple.c
+SRC = main.c
 
 # Platform-specific settings
 ifeq ($(PLATFORM),Windows)
