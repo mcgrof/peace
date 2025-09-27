@@ -29,15 +29,18 @@ make
 
 ## Running
 
-For the best experience with zoom and full-screen waves:
-```bash
-gcc -Wall -O2 -o waves waves.c -lGL -lglfw -lm && ./waves
-```
-
-Or run the original version:
+Simply run:
 ```bash
 make run
 ```
+
+Or build and run manually:
+```bash
+make
+./waves
+```
+
+This creates the complete peaceful waves experience with full-screen animated ocean, beautiful gradients, floating orbs, and interactive zoom!
 
 ### Controls
 

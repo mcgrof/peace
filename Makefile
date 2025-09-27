@@ -8,8 +8,8 @@ endif
 
 CC = gcc
 CFLAGS = -Wall -O2
-TARGET = peaceful
-SRC = main.c
+TARGET = waves
+SRC = waves.c
 
 # Platform-specific settings
 ifeq ($(PLATFORM),Windows)
@@ -46,7 +46,7 @@ demo-capture: capture
 	./capture_demo.sh
 
 clean:
-	rm -f $(TARGET) peaceful_waves capture
+	rm -f $(TARGET) peaceful peaceful_waves capture
 	rm -rf frames
 	rm -f peaceful_waves.gif peaceful_waves_small.gif peaceful_snapshot.png
 

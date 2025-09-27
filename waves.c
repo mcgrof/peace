@@ -83,7 +83,6 @@ int main() {
 
                 // Calculate position-based gradient
                 float gradient = (y + 1.0f) * 0.5f;
-                float horizontalGradient = (x + 1.0f) * 0.5f;
 
                 // Time-based color shifting
                 float colorShift = sin(time * 0.3f) * 0.5f + 0.5f;
