@@ -11,11 +11,47 @@
 #include <stdio.h>
 
 float zoom = 1.0f;
+float clickX = 0.0f;
+float clickY = 0.0f;
+float clickTime = -10.0f;
+int mousePressed = 0;
 
 void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
     zoom += (float)yoffset * 0.1f;
     if (zoom < 0.5f) zoom = 0.5f;
     if (zoom > 3.0f) zoom = 3.0f;
+}
+
+void mouse_button_callback(GLFWwindow* window, int button, int action, int mods) {
+    if (button == GLFW_MOUSE_BUTTON_LEFT) {
+        if (action == GLFW_PRESS) {
+            double xpos, ypos;
+            glfwGetCursorPos(window, &xpos, &ypos);
+
+            int width, height;
+            glfwGetFramebufferSize(window, &width, &height);
+
+            // Convert to OpenGL coordinates accounting for zoom
+            clickX = ((xpos / width) * 2.0f - 1.0f) * zoom;
+            clickY = -((ypos / height) * 2.0f - 1.0f) * zoom;
+            clickTime = glfwGetTime();
+            mousePressed = 1;
+        } else if (action == GLFW_RELEASE) {
+            mousePressed = 0;
+        }
+    }
+}
+
+void cursor_position_callback(GLFWwindow* window, double xpos, double ypos) {
+    if (mousePressed) {
+        int width, height;
+        glfwGetFramebufferSize(window, &width, &height);
+
+        // Update position continuously while dragging
+        clickX = ((xpos / width) * 2.0f - 1.0f) * zoom;
+        clickY = -((ypos / height) * 2.0f - 1.0f) * zoom;
+        // Don't reset clickTime to keep the effect continuous
+    }
 }
 
 void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
@@ -42,6 +78,8 @@ int main() {
     glfwMakeContextCurrent(window);
     glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
     glfwSetScrollCallback(window, scroll_callback);
+    glfwSetMouseButtonCallback(window, mouse_button_callback);
+    glfwSetCursorPosCallback(window, cursor_position_callback);
     glfwSwapInterval(1);  // Enable vsync
 
     // Initialize OpenGL
@@ -78,6 +116,47 @@ int main() {
                 wave += sin(x * 3.0f * zoom + time * layerSpeed) * layerAmplitude;
                 wave += sin(x * 5.0f * zoom - time * layerSpeed * 0.7f) * layerAmplitude * 0.5f;
                 wave += sin(x * 7.0f * zoom + time * layerSpeed * 1.3f) * layerAmplitude * 0.3f;
+
+                // Add ripple and vortex effects from mouse
+                float dx = (x * 2.0f) - clickX;
+                float dy = layerOffset - clickY;
+                float dist = sqrt(dx * dx + dy * dy);
+
+                float timeSinceClick = time - clickTime;
+                if (timeSinceClick >= 0.0f && timeSinceClick < 5.0f) {
+                    // Create expanding ripples
+                    float rippleSpeed = 3.0f;
+                    float rippleRadius = timeSinceClick * rippleSpeed;
+                    float rippleWidth = 0.3f;
+
+                    // Multiple ripple rings
+                    for (int r = 0; r < 3; r++) {
+                        float ringOffset = r * 0.5f;
+                        float ringDist = fabs(dist - (rippleRadius - ringOffset));
+                        if (ringDist < rippleWidth) {
+                            float rippleStrength = (1.0f - ringDist / rippleWidth) * (1.0f - timeSinceClick / 5.0f);
+                            wave += sin(dist * 10.0f - time * 5.0f) * rippleStrength * 0.3f;
+                        }
+                    }
+                }
+
+                // Add vortex/whirlpool effect when mouse is held down
+                if (mousePressed && dist < 1.0f) {
+                    float vortexStrength = (1.0f - dist) * 0.5f;
+                    float angle = atan2(dy, dx);
+
+                    // Swirling motion
+                    wave += sin(angle * 5.0f + time * 10.0f - dist * 20.0f) * vortexStrength;
+
+                    // Pulling effect toward center
+                    wave -= dist * vortexStrength * 0.3f;
+
+                    // Add chaotic turbulence
+                    wave += sin(x * 50.0f + time * 20.0f) * cos(dy * 50.0f) * vortexStrength * 0.2f;
+
+                    // Pulsing effect
+                    wave *= 1.0f + sin(time * 15.0f) * vortexStrength * 0.3f;
+                }
 
                 float y = layerOffset + wave;
 
@@ -140,6 +219,51 @@ int main() {
             }
 
             glEnd();
+        }
+
+        // Draw click explosion particles and continuous effects
+        float timeSinceClick = time - clickTime;
+        if (mousePressed) {
+            // Continuous vortex particles while holding
+            for (int p = 0; p < 30; p++) {
+                float angle = p * 3.14159f * 2.0f / 30.0f + time * 3.0f;
+                float radius = sin(time * 2.0f + p * 0.5f) * 0.3f + 0.2f;
+                float px = clickX + cos(angle) * radius;
+                float py = clickY + sin(angle) * radius;
+
+                glBegin(GL_TRIANGLE_FAN);
+                // Rainbow colors
+                float r = sin(p * 0.3f + time * 5.0f) * 0.5f + 0.5f;
+                float g = cos(p * 0.3f + time * 5.0f) * 0.5f + 0.5f;
+                float b = sin(p * 0.3f + time * 5.0f + 3.14159f) * 0.5f + 0.5f;
+                glColor4f(r, g, b, 0.7f);
+                glVertex2f(px, py);
+                for (int j = 0; j <= 8; j++) {
+                    float a = j * 2.0f * 3.14159f / 8.0f;
+                    float size = 0.02f + sin(time * 10.0f + p) * 0.01f;
+                    glVertex2f(px + cos(a) * size, py + sin(a) * size);
+                }
+                glEnd();
+            }
+        } else if (timeSinceClick >= 0.0f && timeSinceClick < 3.0f) {
+            // Explosion particles after release
+            for (int p = 0; p < 20; p++) {
+                float angle = p * 3.14159f * 2.0f / 20.0f;
+                float particleSpeed = 0.5f + (p % 3) * 0.2f;
+                float px = clickX + cos(angle) * timeSinceClick * particleSpeed;
+                float py = clickY + sin(angle) * timeSinceClick * particleSpeed - timeSinceClick * timeSinceClick * 0.1f;
+                float particleSize = 0.03f * (1.0f - timeSinceClick / 3.0f);
+
+                glBegin(GL_TRIANGLE_FAN);
+                float intensity = 1.0f - timeSinceClick / 3.0f;
+                glColor4f(1.0f, 0.5f + sin(p + time * 5.0f) * 0.5f, 0.2f, intensity);
+                glVertex2f(px, py);
+                for (int j = 0; j <= 8; j++) {
+                    float a = j * 2.0f * 3.14159f / 8.0f;
+                    glVertex2f(px + cos(a) * particleSize, py + sin(a) * particleSize);
+                }
+                glEnd();
+            }
         }
 
         // Draw floating orbs
