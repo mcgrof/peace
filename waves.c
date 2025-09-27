@@ -15,6 +15,7 @@ float clickX = 0.0f;
 float clickY = 0.0f;
 float clickTime = -10.0f;
 int mousePressed = 0;
+float aspectRatio = 4.0f / 3.0f;
 
 void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
     zoom += (float)yoffset * 0.1f;
@@ -31,8 +32,10 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
             int width, height;
             glfwGetFramebufferSize(window, &width, &height);
 
-            // Convert to OpenGL coordinates accounting for zoom
-            clickX = ((xpos / width) * 2.0f - 1.0f) * zoom;
+            // Convert pixel coordinates to OpenGL world coordinates
+            // Account for aspect ratio in projection
+            float aspect = (float)width / (float)height;
+            clickX = ((xpos / width) * 2.0f - 1.0f) * aspect * zoom;
             clickY = -((ypos / height) * 2.0f - 1.0f) * zoom;
             clickTime = glfwGetTime();
             mousePressed = 1;
@@ -48,7 +51,8 @@ void cursor_position_callback(GLFWwindow* window, double xpos, double ypos) {
         glfwGetFramebufferSize(window, &width, &height);
 
         // Update position continuously while dragging
-        clickX = ((xpos / width) * 2.0f - 1.0f) * zoom;
+        float aspect = (float)width / (float)height;
+        clickX = ((xpos / width) * 2.0f - 1.0f) * aspect * zoom;
         clickY = -((ypos / height) * 2.0f - 1.0f) * zoom;
         // Don't reset clickTime to keep the effect continuous
     }
@@ -58,7 +62,8 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
     glViewport(0, 0, width, height);
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
-    glOrtho(-1.0 * zoom, 1.0 * zoom, -1.0 * zoom, 1.0 * zoom, -1.0, 1.0);
+    aspectRatio = (float)width / (float)height;
+    glOrtho(-aspectRatio * zoom, aspectRatio * zoom, -1.0 * zoom, 1.0 * zoom, -1.0, 1.0);
     glMatrixMode(GL_MODELVIEW);
 }
 
@@ -118,7 +123,8 @@ int main() {
                 wave += sin(x * 7.0f * zoom + time * layerSpeed * 1.3f) * layerAmplitude * 0.3f;
 
                 // Add ripple and vortex effects from mouse
-                float dx = (x * 2.0f) - clickX;
+                // vertices are at x * aspectRatio * zoom
+                float dx = x * aspectRatio * zoom - clickX;
                 float dy = layerOffset - clickY;
                 float dist = sqrt(dx * dx + dy * dy);
 
@@ -212,10 +218,11 @@ int main() {
                 glColor4f(r, g, b, a);
 
                 // Top vertex
-                glVertex2f(x * 2.0f, y);
+                // x needs to be scaled by aspect to match projection
+                glVertex2f(x * aspectRatio * zoom, y);
 
                 // Bottom vertex
-                glVertex2f(x * 2.0f, -2.0f);
+                glVertex2f(x * aspectRatio * zoom, -1.0f * zoom);
             }
 
             glEnd();
@@ -269,8 +276,8 @@ int main() {
         // Draw floating orbs
         for (int i = 0; i < 8; i++) {
             float orbTime = time * 0.3f + i * 1.5f;
-            float orbX = sin(orbTime * 0.7f + i * 2.0f) * 1.5f;
-            float orbY = cos(orbTime * 0.5f + i * 1.3f) * 0.8f + sin(orbTime) * 0.2f;
+            float orbX = sin(orbTime * 0.7f + i * 2.0f) * 0.8f;
+            float orbY = cos(orbTime * 0.5f + i * 1.3f) * 0.4f + sin(orbTime) * 0.1f;
             float orbSize = 0.02f + sin(orbTime * 2.0f) * 0.01f;
 
             // Orb glow effect - outer glow
@@ -299,6 +306,18 @@ int main() {
                 float x = orbX + cos(angle) * orbSize;
                 float y = orbY + sin(angle) * orbSize;
                 glVertex2f(x, y);
+            }
+            glEnd();
+        }
+
+        // Debug: Draw a small marker at the mouse click position
+        if (mousePressed) {
+            glBegin(GL_TRIANGLE_FAN);
+            glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+            glVertex2f(clickX, clickY);
+            for (int j = 0; j <= 20; j++) {
+                float angle = j * 2.0f * 3.14159f / 20.0f;
+                glVertex2f(clickX + cos(angle) * 0.05f, clickY + sin(angle) * 0.05f);
             }
             glEnd();
         }
