@@ -20,10 +20,17 @@
 #define NUM_LAYERS 6
 
 // Camera state
-float zoom = 0.7f;  // Start very zoomed out to see everything
+float zoom = 8.0f;  // Start zoomed all the way in
 float cameraAngle = 0.0f;
 float cameraElevation = 0.5f;
-float cameraY = -3.0f;  // Start lower to see words
+float cameraY = 0.0f;  // Camera Y position
+float cameraPanX = 0.0f;
+float cameraPanZ = -5.0f;  // Start panned up to see content
+
+// Mouse drag state
+int isDragging = 0;
+double lastMouseX = 0;
+double lastMouseY = 0;
 
 // Token colors and labels
 typedef struct {
@@ -47,6 +54,7 @@ typedef struct {
 Vec3 tokenPositions[NUM_TOKENS][NUM_LAYERS];
 float animationPhase = 0.0f;
 int currentLayer = 0;
+int currentForwardPass = 1;  // Which forward pass we're on (1-5)
 
 // Font rendering
 stbtt_fontinfo font;
@@ -58,6 +66,31 @@ void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
     zoom += (float)yoffset * 0.2f;
     if (zoom < 0.5f) zoom = 0.5f;  // Allow much more zoom out
     if (zoom > 8.0f) zoom = 8.0f;
+}
+
+void mouse_button_callback(GLFWwindow* window, int button, int action, int mods) {
+    if (button == GLFW_MOUSE_BUTTON_LEFT) {
+        if (action == GLFW_PRESS) {
+            isDragging = 1;
+            glfwGetCursorPos(window, &lastMouseX, &lastMouseY);
+        } else if (action == GLFW_RELEASE) {
+            isDragging = 0;
+        }
+    }
+}
+
+void cursor_position_callback(GLFWwindow* window, double xpos, double ypos) {
+    if (isDragging) {
+        double dx = xpos - lastMouseX;
+        double dy = ypos - lastMouseY;
+
+        // Pan camera based on mouse movement (inverted to feel natural)
+        cameraPanX += dx * 0.01f / zoom;
+        cameraPanZ += dy * 0.01f / zoom;  // Also inverted for natural feel
+
+        lastMouseX = xpos;
+        lastMouseY = ypos;
+    }
 }
 
 void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
@@ -546,20 +579,41 @@ void drawLayerPlane(int layer, float alpha) {
     float y = tokenPositions[0][layer].y;
     float size = 2.0f;
 
-    // Draw more visible plane
+    // Alternating colors based on layer type
+    float r1, g1, b1, r2, g2, b2;
+    float gridR, gridG, gridB;
+
+    if (layer == 0) {
+        // Layer 0 - Embeddings (green)
+        r1 = 0.2f; g1 = 0.5f; b1 = 0.3f;
+        r2 = 0.3f; g2 = 0.6f; b2 = 0.4f;
+        gridR = 0.4f; gridG = 0.7f; gridB = 0.5f;
+    } else if (layer % 2 == 1) {
+        // Attention layers (blue)
+        r1 = 0.2f; g1 = 0.3f; b1 = 0.6f;
+        r2 = 0.3f; g2 = 0.4f; b2 = 0.7f;
+        gridR = 0.4f; gridG = 0.5f; gridB = 0.8f;
+    } else {
+        // FFN layers (orange)
+        r1 = 0.6f; g1 = 0.4f; b1 = 0.2f;
+        r2 = 0.7f; g2 = 0.5f; b2 = 0.3f;
+        gridR = 0.8f; gridG = 0.6f; gridB = 0.4f;
+    }
+
+    // Draw more visible plane with color
     glBegin(GL_QUADS);
-    glColor4f(0.3f, 0.4f, 0.5f, alpha * 0.2f);
+    glColor4f(r1, g1, b1, alpha * 0.25f);
     glVertex3f(-size, y, -size);
     glVertex3f(size, y, -size);
-    glColor4f(0.4f, 0.5f, 0.6f, alpha * 0.15f);
+    glColor4f(r2, g2, b2, alpha * 0.2f);
     glVertex3f(size, y, size);
     glVertex3f(-size, y, size);
     glEnd();
 
-    // Draw grid lines
+    // Draw grid lines with matching color
     glLineWidth(1.0f);
     glBegin(GL_LINES);
-    glColor4f(0.5f, 0.6f, 0.7f, alpha * 0.3f);
+    glColor4f(gridR, gridG, gridB, alpha * 0.4f);
     for (int i = -4; i <= 4; i++) {
         float pos = i * 0.5f;
         glVertex3f(pos, y, -size);
@@ -570,9 +624,7 @@ void drawLayerPlane(int layer, float alpha) {
     glEnd();
     glLineWidth(2.0f);
 
-    // Draw layer number
-    glColor4f(1.0f, 1.0f, 1.0f, alpha * 0.8f);
-    drawDigit(layer, -size + 0.2f, y + 0.05f, size - 0.3f, 0.3f);
+    // Layer number will be drawn as billboard text later
 }
 
 int main() {
@@ -591,6 +643,8 @@ int main() {
     glfwMakeContextCurrent(window);
     glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
     glfwSetScrollCallback(window, scroll_callback);
+    glfwSetMouseButtonCallback(window, mouse_button_callback);
+    glfwSetCursorPosCallback(window, cursor_position_callback);
     glfwSwapInterval(1);
 
     // Initialize OpenGL
@@ -639,22 +693,33 @@ int main() {
         glClearColor(bgR, bgG, bgB, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        // Animation: slowly progress through layers
+        // Animation: progress through layers
         // Pause at start to show the words
         if (time < 3.0f) {
             animationPhase = 0.0f;  // Hold at layer 0 for first 3 seconds
         } else {
-            animationPhase += 0.005f;
+            animationPhase += 0.02f;  // Slower
         }
 
-        // Cycle through layers with pauses
-        float cycleLength = NUM_LAYERS * 2.0f;  // 2 seconds per layer
-        float cyclePhase = fmodf(animationPhase, cycleLength);
-        currentLayer = (int)(cyclePhase / 2.0f);
+        // Simple autoregressive: cycle through forward passes
+        // Each forward pass goes through all 6 layers, then moves to next pass
+        float LAYER_TIME = 1.0f;  // 1 second per layer
+        float PASS_TIME = NUM_LAYERS * LAYER_TIME;  // Time per forward pass = 6 seconds
+        float TOTAL_TIME = NUM_TOKENS * PASS_TIME;  // Total animation cycle = 30 seconds
+
+        float cyclePhase = fmodf(animationPhase, TOTAL_TIME);
+
+        // Determine current forward pass (1-5)
+        currentForwardPass = ((int)(cyclePhase / PASS_TIME)) + 1;
+        if (currentForwardPass > NUM_TOKENS) currentForwardPass = NUM_TOKENS;
+
+        // Within current pass, which layer (0-5)
+        float passLocalTime = fmodf(cyclePhase, PASS_TIME);
+        currentLayer = (int)(passLocalTime / LAYER_TIME);
         if (currentLayer >= NUM_LAYERS) currentLayer = NUM_LAYERS - 1;
 
-        float layerBlend = fmodf(cyclePhase, 2.0f);
-        if (layerBlend > 1.0f) layerBlend = 1.0f;  // Pause at each layer
+        // Blend between layers
+        float layerBlend = fmodf(passLocalTime, LAYER_TIME) / LAYER_TIME;
 
         // Camera setup - moves up as layers progress
         glLoadIdentity();
@@ -664,32 +729,67 @@ int main() {
         cameraY += (targetY - cameraY) * 0.05f;  // Smooth following
 
         // Position camera to see current layer
-        glTranslatef(0, cameraY, -10.0f / zoom);  // Pull back more
+        glTranslatef(cameraPanX, cameraY, -10.0f / zoom);  // Pull back more, apply pan
         glRotatef(30.0f, 1, 0, 0);  // Tilt down more to see action
         glRotatef(0.0f, 0, 1, 0);  // No rotation - keep it stable
+        glTranslatef(0, 0, cameraPanZ);  // Apply Z pan after rotation
 
-        // Draw attention links between tokens at current layer
+        // Draw LINEAR transformation vectors for attention layers
         if (currentLayer > 0 && currentLayer % 2 == 1 && layerBlend > 0.2f) {
-            // Attention layer - show cross-token connections
-            float linkAlpha = layerBlend * (0.3f + currentLayer * 0.1f); // Stronger at higher layers
-            float linkWidth = 1.0f + currentLayer * 0.5f; // Thicker at higher layers
+            // Attention layer - show LINEAR transformation with bold colored vectors
+            float vectorAlpha = layerBlend * 0.8f;
 
-            glLineWidth(linkWidth);
-            glEnable(GL_LINE_SMOOTH);
+            // Only show tokens in current forward pass
+            for (int i = 0; i < currentForwardPass; i++) {
+                Vec3 from = tokenPositions[i][currentLayer - 1];
+                Vec3 to = tokenPositions[i][currentLayer];
 
-            for (int i = 0; i < NUM_TOKENS; i++) {
+                // Interpolate during animation
+                if (layerBlend < 1.0f) {
+                    to.x = from.x + layerBlend * (to.x - from.x);
+                    to.y = from.y + layerBlend * (to.y - from.y);
+                    to.z = from.z + layerBlend * (to.z - from.z);
+                }
+
+                // Draw BOLD linear transformation vector with gradient
+                glLineWidth(6.0f);
+                glBegin(GL_LINES);
+                glColor4f(tokens[i].r, tokens[i].g, tokens[i].b, vectorAlpha * 0.3f);
+                glVertex3f(from.x, from.y, from.z);
+                glColor4f(tokens[i].r * 1.3f, tokens[i].g * 1.3f, tokens[i].b * 1.3f, vectorAlpha);
+                glVertex3f(to.x, to.y, to.z);
+                glEnd();
+
+                // Draw arrowhead at destination
+                Vec3 dir = {to.x - from.x, to.y - from.y, to.z - from.z};
+                float len = sqrtf(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
+                if (len > 0.01f) {
+                    dir.x /= len; dir.y /= len; dir.z /= len;
+                    float arrowSize = 0.1f;
+
+                    glBegin(GL_TRIANGLES);
+                    glColor4f(tokens[i].r * 1.3f, tokens[i].g * 1.3f, tokens[i].b * 1.3f, vectorAlpha);
+                    glVertex3f(to.x, to.y, to.z);
+                    glVertex3f(to.x - dir.x * arrowSize - dir.y * arrowSize * 0.5f,
+                              to.y - dir.y * arrowSize + dir.x * arrowSize * 0.5f, to.z);
+                    glVertex3f(to.x - dir.x * arrowSize + dir.y * arrowSize * 0.5f,
+                              to.y - dir.y * arrowSize - dir.x * arrowSize * 0.5f, to.z);
+                    glEnd();
+                }
+            }
+
+            // Also show cross-token attention links (thinner)
+            float linkAlpha = layerBlend * 0.2f;
+            glLineWidth(2.0f);
+            for (int i = 0; i < currentForwardPass; i++) {
                 Vec3 from = tokenPositions[i][currentLayer];
-                for (int j = i + 1; j < NUM_TOKENS; j++) {
+                for (int j = i + 1; j < currentForwardPass; j++) {
                     Vec3 to = tokenPositions[j][currentLayer];
-
-                    // Attention link with pulsing effect
                     float pulse = sinf(time * 3.0f + i + j) * 0.3f + 0.7f;
 
                     glBegin(GL_LINES);
-                    // Gradient from source to destination
-                    glColor4f(tokens[i].r * 0.7f + 0.3f, tokens[i].g * 0.7f + 0.3f, tokens[i].b * 0.7f + 0.5f, linkAlpha * pulse);
+                    glColor4f(0.4f, 0.6f, 1.0f, linkAlpha * pulse);
                     glVertex3f(from.x, from.y, from.z);
-                    glColor4f(tokens[j].r * 0.7f + 0.3f, tokens[j].g * 0.7f + 0.3f, tokens[j].b * 0.7f + 0.5f, linkAlpha * pulse);
                     glVertex3f(to.x, to.y, to.z);
                     glEnd();
                 }
@@ -698,30 +798,74 @@ int main() {
             glLineWidth(2.0f);
         }
 
-        // Draw FFN transformation indicators
+        // Draw NON-LINEAR FFN transformation - curved wavy paths showing activation function
         if (currentLayer > 0 && currentLayer % 2 == 0 && layerBlend > 0.2f) {
-            // FFN layer - show rotation/transformation happening
-            float transformAlpha = layerBlend * 0.5f;
+            // FFN layer - show NON-LINEAR transformation with dramatic curved particle trails
+            float transformAlpha = layerBlend * 0.7f;
 
-            // Draw spinning circles around each token to show non-linear transformation
-            for (int i = 0; i < NUM_TOKENS; i++) {
+            for (int i = 0; i < currentForwardPass; i++) {
+                Vec3 from = tokenPositions[i][currentLayer - 1];
+                Vec3 to = tokenPositions[i][currentLayer];
+
+                // Draw multiple curved particle trails showing non-linearity
+                int numTrails = 8;
+                for (int trail = 0; trail < numTrails; trail++) {
+                    float trailAngle = (2.0f * PI * trail / numTrails) + time * 1.5f + i;
+                    float trailRadius = 0.15f;
+
+                    glLineWidth(3.0f);
+                    glBegin(GL_LINE_STRIP);
+
+                    // Draw curved path from old position to new position
+                    int steps = 15;
+                    for (int step = 0; step <= steps; step++) {
+                        float t = (float)step / steps;
+                        float smoothT = t * t * (3.0f - 2.0f * t); // Smooth step
+
+                        // Interpolate position
+                        float x = from.x + smoothT * (to.x - from.x);
+                        float y = from.y + smoothT * (to.y - from.y);
+                        float z = from.z + smoothT * (to.z - from.z);
+
+                        // Add NON-LINEAR wave distortion (activation function visualization)
+                        float wave = sinf(t * PI * 3.0f + trailAngle) * trailRadius;
+                        wave *= (1.0f - t); // Decay as we approach destination
+
+                        x += cosf(trailAngle) * wave;
+                        z += sinf(trailAngle) * wave;
+
+                        // Color gradient with pulsing
+                        float intensity = 1.0f - t * 0.5f;
+                        float pulse = sinf(time * 4.0f + trail + step * 0.2f) * 0.3f + 0.7f;
+                        glColor4f(1.0f * intensity, 0.6f * intensity, 0.2f * intensity,
+                                 transformAlpha * pulse * (1.0f - t * 0.5f));
+                        glVertex3f(x, y, z);
+                    }
+                    glEnd();
+                }
+
+                // Draw spiraling "energy" around the token at new position
                 Vec3 pos = tokenPositions[i][currentLayer];
-                float radius = 0.25f;
-                int segments = 20;
+                glLineWidth(2.0f);
+                glBegin(GL_LINE_STRIP);
+                int spiralSteps = 20;
+                for (int s = 0; s < spiralSteps; s++) {
+                    float t = (float)s / spiralSteps;
+                    float spiralAngle = t * PI * 4.0f + time * 3.0f + i;
+                    float spiralRadius = 0.2f * (1.0f - t);
 
-                glBegin(GL_LINE_LOOP);
-                for (int seg = 0; seg < segments; seg++) {
-                    float angle = 2.0f * PI * seg / segments + time * 2.0f + i;
-                    float x = pos.x + cosf(angle) * radius;
-                    float z = pos.z + sinf(angle) * radius;
+                    float x = pos.x + cosf(spiralAngle) * spiralRadius;
+                    float y = pos.y + t * 0.15f - 0.075f;
+                    float z = pos.z + sinf(spiralAngle) * spiralRadius;
 
-                    // Orange glow for FFN
-                    float segAlpha = transformAlpha * (0.5f + 0.5f * sinf(angle * 3.0f));
-                    glColor4f(1.0f, 0.5f, 0.2f, segAlpha);
-                    glVertex3f(x, pos.y, z);
+                    float intensity = 1.0f - t;
+                    glColor4f(1.0f * intensity, 0.5f * intensity, 0.2f * intensity, transformAlpha * intensity);
+                    glVertex3f(x, y, z);
                 }
                 glEnd();
             }
+
+            glLineWidth(2.0f);
         }
 
         // Draw token words below layer 0 using TrueType font
@@ -732,6 +876,7 @@ int main() {
             int width, height;
             glfwGetFramebufferSize(window, &width, &height);
 
+            // Draw ALL words at bottom (showing full sequence)
             for (int i = 0; i < NUM_TOKENS; i++) {
                 Vec3 wordPos = tokenPositions[i][0];
                 wordPos.y = wordY;
@@ -778,8 +923,25 @@ int main() {
                         textWidth += advance * scale;
                     }
 
+                    // Highlight tokens in current forward pass, dim future tokens
+                    float brightness, alpha;
+                    if (i < currentForwardPass) {
+                        // Tokens we HAVE (inputs to this forward pass)
+                        brightness = 1.2f;
+                        alpha = 1.0f;
+                    } else if (i == currentForwardPass && currentForwardPass < NUM_TOKENS) {
+                        // Token being PREDICTED (not yet generated - show dimmer with pulse)
+                        float pulse = sinf(time * 3.0f) * 0.2f + 0.5f;
+                        brightness = 0.6f * pulse;
+                        alpha = 0.5f;
+                    } else {
+                        // Not yet generated
+                        brightness = 0.3f;
+                        alpha = 0.3f;
+                    }
+
                     drawText(tokens[i].label, screenX - textWidth/2, screenY, 48,
-                            tokens[i].r * 1.2f, tokens[i].g * 1.2f, tokens[i].b * 1.2f, 1.0f);
+                            tokens[i].r * brightness, tokens[i].g * brightness, tokens[i].b * brightness, alpha);
 
                     restoreFromTextOverlay();
                 }
@@ -832,6 +994,58 @@ int main() {
             drawLayerPlane(layer, alpha);
         }
 
+        // Draw layer numbers as billboards
+        if (fontBuffer) {
+            int width, height;
+            glfwGetFramebufferSize(window, &width, &height);
+
+            for (int layer = 0; layer <= currentLayer; layer++) {
+                float y = tokenPositions[0][layer].y;
+                float size = 2.0f;
+                Vec3 labelPos = {-size + 0.3f, y + 0.1f, size - 0.3f};
+
+                // Project to screen space
+                float modelview[16], projection[16];
+                glGetFloatv(GL_MODELVIEW_MATRIX, modelview);
+                glGetFloatv(GL_PROJECTION_MATRIX, projection);
+
+                float x = labelPos.x;
+                float ly = labelPos.y;
+                float z = labelPos.z;
+
+                // Transform by modelview
+                float mx = modelview[0]*x + modelview[4]*ly + modelview[8]*z + modelview[12];
+                float my = modelview[1]*x + modelview[5]*ly + modelview[9]*z + modelview[13];
+                float mz = modelview[2]*x + modelview[6]*ly + modelview[10]*z + modelview[14];
+                float mw = modelview[3]*x + modelview[7]*ly + modelview[11]*z + modelview[15];
+
+                // Transform by projection
+                float px = projection[0]*mx + projection[4]*my + projection[8]*mz + projection[12]*mw;
+                float py = projection[1]*mx + projection[5]*my + projection[9]*mz + projection[13]*mw;
+                float pw = projection[3]*mx + projection[7]*my + projection[11]*mz + projection[15]*mw;
+
+                if (pw != 0) {
+                    px /= pw;
+                    py /= pw;
+
+                    // Convert to screen coordinates
+                    float screenX = (px + 1.0f) * width / 2.0f;
+                    float screenY = (1.0f - py) * height / 2.0f;
+
+                    // Draw layer number
+                    setupTextOverlay(width, height);
+
+                    char layerNum[8];
+                    snprintf(layerNum, sizeof(layerNum), "L%d", layer);
+
+                    float alpha = (layer == currentLayer) ? layerBlend : 1.0f;
+                    drawText(layerNum, screenX, screenY, 32, 1.0f, 1.0f, 1.0f, alpha * 0.8f);
+
+                    restoreFromTextOverlay();
+                }
+            }
+        }
+
         // Draw subtle trajectories (history trails) up to current layer
         glDepthMask(GL_FALSE);
         for (int i = 0; i < NUM_TOKENS; i++) {
@@ -859,8 +1073,8 @@ int main() {
         // Disable depth writes for transparent objects
         glDepthMask(GL_FALSE);
 
-        // Draw token orbs - growing larger through layers
-        for (int i = 0; i < NUM_TOKENS; i++) {
+        // Draw token orbs - only tokens in current forward pass
+        for (int i = 0; i < currentForwardPass; i++) {
             // Draw at current layer position
             Vec3 pos = tokenPositions[i][currentLayer];
             if (currentLayer < NUM_LAYERS - 1 && layerBlend > 0.5f) {
@@ -901,28 +1115,52 @@ int main() {
             setupTextOverlay(width, height);
 
             // Title
-            drawText("TRANSFORMER RESIDUAL STREAM", 20, 30, 32, 1.0f, 1.0f, 1.0f, 0.9f);
+            drawText("AUTOREGRESSIVE TRANSFORMER", 20, 30, 32, 1.0f, 1.0f, 1.0f, 0.9f);
+
+            // BIG DEBUG: Show current pass number
+            char bigNum[16];
+            snprintf(bigNum, sizeof(bigNum), "PASS: %d", currentForwardPass);
+            drawText(bigNum, width - 250, 30, 48, 1.0f, 0.0f, 0.0f, 1.0f);
+
+            // Show which forward pass we're on with DEBUG info
+            char passInfo[256];
+            if (currentForwardPass < NUM_TOKENS) {
+                // Build the input sequence string
+                char inputSeq[128] = "";
+                for (int i = 0; i < currentForwardPass; i++) {
+                    if (i > 0) strcat(inputSeq, " ");
+                    strcat(inputSeq, tokens[i].label);
+                }
+                snprintf(passInfo, sizeof(passInfo), "Forward Pass %d: [%s] -> Predicting: %s (phase: %.1f)",
+                        currentForwardPass, inputSeq, tokens[currentForwardPass].label, animationPhase);
+                drawText(passInfo, 20, 70, 20, 1.0f, 1.0f, 0.4f, 0.9f);
+                drawText("(Bright tokens process in parallel through layers)", 20, 100, 16, 0.7f, 0.7f, 0.7f, 0.8f);
+            } else {
+                snprintf(passInfo, sizeof(passInfo), "Forward Pass 5: Complete! (phase: %.1f)", animationPhase);
+                drawText(passInfo, 20, 70, 20, 0.5f, 1.0f, 0.5f, 0.9f);
+            }
+
+            char layerInfo[128];
 
             // Current layer info
-            char layerInfo[128];
             if (time < 3.0f) {
-                drawText("WORDS -> EMBEDDINGS", 20, 70, 28, 0.4f, 1.0f, 1.0f, 0.9f);
-                drawText("Look at the colored words at the bottom", 20, 105, 18, 0.8f, 0.8f, 0.8f, 0.8f);
+                drawText("WORDS -> EMBEDDINGS", 20, 130, 22, 0.4f, 1.0f, 1.0f, 0.9f);
+                drawText("Watch multiple forward passes, each with more tokens", 20, 160, 16, 0.8f, 0.8f, 0.8f, 0.8f);
             } else if (currentLayer == 0) {
-                drawText("LAYER 0: Embeddings", 20, 70, 28, 0.5f, 1.0f, 0.5f, 0.9f);
-                drawText("Arrows point from words to embedding vectors", 20, 105, 18, 0.8f, 0.8f, 0.8f, 0.8f);
+                drawText("LAYER 0: Embeddings", 20, 130, 22, 0.5f, 1.0f, 0.5f, 0.9f);
+                drawText("Converting words to vectors", 20, 160, 16, 0.8f, 0.8f, 0.8f, 0.8f);
             } else if (currentLayer % 2 == 1) {
-                snprintf(layerInfo, sizeof(layerInfo), "LAYER %d: Attention", currentLayer);
-                drawText(layerInfo, 20, 70, 28, 0.4f, 0.6f, 1.0f, 0.9f);
-                drawText("Blue links show tokens attending to each other", 20, 105, 18, 0.8f, 0.8f, 0.8f, 0.8f);
+                snprintf(layerInfo, sizeof(layerInfo), "LAYER %d: Attention (LINEAR)", currentLayer);
+                drawText(layerInfo, 20, 130, 22, 0.4f, 0.6f, 1.0f, 0.9f);
+                drawText("Straight colored arrows = linear transformation", 20, 160, 16, 0.8f, 0.8f, 0.8f, 0.8f);
             } else {
-                snprintf(layerInfo, sizeof(layerInfo), "LAYER %d: Feed-Forward (FFN)", currentLayer);
-                drawText(layerInfo, 20, 70, 28, 1.0f, 0.6f, 0.3f, 0.9f);
-                drawText("Orange circles show non-linear transformations", 20, 105, 18, 0.8f, 0.8f, 0.8f, 0.8f);
+                snprintf(layerInfo, sizeof(layerInfo), "LAYER %d: FFN (NON-LINEAR)", currentLayer);
+                drawText(layerInfo, 20, 130, 22, 1.0f, 0.6f, 0.3f, 0.9f);
+                drawText("Curved wavy trails = activation function (non-linear)", 20, 160, 16, 0.8f, 0.8f, 0.8f, 0.8f);
             }
 
             // Instructions
-            drawText("Scroll to zoom", 20, height - 30, 16, 0.7f, 0.7f, 0.7f, 0.7f);
+            drawText("Scroll to zoom | Drag to pan", 20, height - 30, 16, 0.7f, 0.7f, 0.7f, 0.7f);
 
             restoreFromTextOverlay();
         }
