@@ -10,6 +10,8 @@ CC = gcc
 CFLAGS = -Wall -O2
 TARGET = waves
 SRC = waves.c
+TRANSFORMER = transformer
+TRANSFORMER_SRC = transformer.c
 
 # Platform-specific settings
 ifeq ($(PLATFORM),Windows)
@@ -36,6 +38,9 @@ endif
 $(TARGET): $(SRC)
 	$(CC) $(CFLAGS) -o $(TARGET) $(SRC) $(LDFLAGS) $(LIBS)
 
+$(TRANSFORMER): $(TRANSFORMER_SRC)
+	$(CC) $(CFLAGS) -o $(TRANSFORMER) $(TRANSFORMER_SRC) $(LDFLAGS) $(LIBS)
+
 capture: capture_simple.c
 	$(CC) $(CFLAGS) -o capture capture_simple.c $(LDFLAGS) $(LIBS)
 
@@ -45,15 +50,20 @@ capture-advanced: capture.c
 demo-capture: capture
 	./capture_demo.sh
 
+all: $(TARGET) $(TRANSFORMER)
+
 clean:
-	rm -f $(TARGET) peaceful peaceful_waves capture
+	rm -f $(TARGET) $(TRANSFORMER) peaceful peaceful_waves capture
 	rm -rf frames
 	rm -f peaceful_waves.gif peaceful_waves_small.gif peaceful_snapshot.png
 
 run: $(TARGET)
 	./$(TARGET)
 
-style:
-	clang-format -style="{BasedOnStyle: Google, IndentWidth: 4}" -i $(SRC)
+run-transformer: $(TRANSFORMER)
+	./$(TRANSFORMER)
 
-.PHONY: clean run style capture demo-capture
+style:
+	clang-format -style="{BasedOnStyle: Google, IndentWidth: 4}" -i $(SRC) $(TRANSFORMER_SRC)
+
+.PHONY: all clean run run-transformer style capture demo-capture
