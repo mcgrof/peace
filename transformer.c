@@ -10,6 +10,10 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
+
+#define STB_TRUETYPE_IMPLEMENTATION
+#include "stb_truetype.h"
 
 #define PI 3.14159265359f
 #define NUM_TOKENS 5
@@ -43,6 +47,12 @@ typedef struct {
 Vec3 tokenPositions[NUM_TOKENS][NUM_LAYERS];
 float animationPhase = 0.0f;
 int currentLayer = 0;
+
+// Font rendering
+stbtt_fontinfo font;
+unsigned char* fontBuffer = NULL;
+unsigned char* fontBitmap = NULL;
+int bitmapW = 512, bitmapH = 512;
 
 void scroll_callback(GLFWwindow* window, double xoffset, double yoffset) {
     zoom += (float)yoffset * 0.2f;
@@ -360,48 +370,6 @@ void drawWord(const char* word, float x, float y, float z, float size) {
     }
 }
 
-void draw2DText(const char* text, float x, float y, float size, float r, float g, float b, float a) {
-    // Draw text in 2D screen space (x, y in pixels from bottom-left)
-    glColor4f(r, g, b, a);
-    float spacing = size * 0.7f;  // Better spacing
-    float offset = 0;
-    for (int i = 0; text[i] != '\0'; i++) {
-        if (text[i] == ' ') {
-            offset += spacing * 0.6f;
-        } else {
-            drawLetter(text[i], x + offset, y, 0, size);
-            offset += spacing;
-        }
-    }
-}
-
-void setupTextOverlay(int width, int height) {
-    // Switch to 2D orthographic projection for text overlay
-    glMatrixMode(GL_PROJECTION);
-    glPushMatrix();
-    glLoadIdentity();
-    glOrtho(0, width, 0, height, -1, 1);
-
-    glMatrixMode(GL_MODELVIEW);
-    glPushMatrix();
-    glLoadIdentity();
-
-    glDisable(GL_DEPTH_TEST);
-}
-
-void restoreFromTextOverlay() {
-    // Restore 3D projection
-    glEnable(GL_DEPTH_TEST);
-
-    glMatrixMode(GL_MODELVIEW);
-    glPopMatrix();
-
-    glMatrixMode(GL_PROJECTION);
-    glPopMatrix();
-
-    glMatrixMode(GL_MODELVIEW);
-}
-
 void drawDigit(int digit, float x, float y, float z, float size) {
     // Draw digits 0-9 using simple line segments
     float segments[10][7] = {
@@ -463,6 +431,115 @@ void drawDigit(int digit, float x, float y, float z, float size) {
 
     glEnd();
     glLineWidth(2.0f);
+}
+
+int loadFont(const char* filename) {
+    FILE* f = fopen(filename, "rb");
+    if (!f) return 0;
+
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    fontBuffer = (unsigned char*)malloc(size);
+    fread(fontBuffer, 1, size, f);
+    fclose(f);
+
+    if (!stbtt_InitFont(&font, fontBuffer, 0)) {
+        free(fontBuffer);
+        fontBuffer = NULL;
+        return 0;
+    }
+
+    fontBitmap = (unsigned char*)malloc(bitmapW * bitmapH);
+    memset(fontBitmap, 0, bitmapW * bitmapH);
+
+    return 1;
+}
+
+void drawText(const char* text, float x, float y, float size, float r, float g, float b, float a) {
+    if (!fontBuffer) return;
+
+    float scale = stbtt_ScaleForPixelHeight(&font, size);
+    int ascent, descent, lineGap;
+    stbtt_GetFontVMetrics(&font, &ascent, &descent, &lineGap);
+
+    float xpos = x;
+    float baseline = y + ascent * scale;
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glColor4f(r, g, b, a);
+
+    for (int i = 0; text[i]; i++) {
+        int advance, lsb;
+        int x0, y0, x1, y1;
+
+        stbtt_GetCodepointHMetrics(&font, text[i], &advance, &lsb);
+        stbtt_GetCodepointBitmapBox(&font, text[i], scale, scale, &x0, &y0, &x1, &y1);
+
+        int w = x1 - x0;
+        int h = y1 - y0;
+
+        if (w > 0 && h > 0) {
+            unsigned char* bitmap = (unsigned char*)malloc(w * h);
+            stbtt_MakeCodepointBitmap(&font, bitmap, w, h, w, scale, scale, text[i]);
+
+            // Draw bitmap as textured quads
+            float bx = xpos + x0;
+            float by = baseline + y0;
+
+            glBegin(GL_QUADS);
+            for (int py = 0; py < h; py++) {
+                for (int px = 0; px < w; px++) {
+                    unsigned char alpha_val = bitmap[py * w + px];
+                    if (alpha_val > 20) {
+                        float intensity = alpha_val / 255.0f;
+                        glColor4f(r, g, b, a * intensity);
+                        float qx = bx + px;
+                        float qy = by + py;
+                        glVertex2f(qx, qy);
+                        glVertex2f(qx + 1, qy);
+                        glVertex2f(qx + 1, qy + 1);
+                        glVertex2f(qx, qy + 1);
+                    }
+                }
+            }
+            glEnd();
+
+            free(bitmap);
+        }
+
+        xpos += advance * scale;
+        if (text[i + 1]) {
+            xpos += scale * stbtt_GetCodepointKernAdvance(&font, text[i], text[i + 1]);
+        }
+    }
+}
+
+void setupTextOverlay(int width, int height) {
+    glMatrixMode(GL_PROJECTION);
+    glPushMatrix();
+    glLoadIdentity();
+    glOrtho(0, width, height, 0, -1, 1);  // Flip Y so 0 is at top
+
+    glMatrixMode(GL_MODELVIEW);
+    glPushMatrix();
+    glLoadIdentity();
+
+    glDisable(GL_DEPTH_TEST);
+}
+
+void restoreFromTextOverlay() {
+    glEnable(GL_DEPTH_TEST);
+
+    glMatrixMode(GL_MODELVIEW);
+    glPopMatrix();
+
+    glMatrixMode(GL_PROJECTION);
+    glPopMatrix();
+
+    glMatrixMode(GL_MODELVIEW);
 }
 
 void drawLayerPlane(int layer, float alpha) {
@@ -532,9 +609,24 @@ int main() {
 
     initializeTokenPositions();
 
-    printf("=== Transformer Residual Stream Visualization ===\n");
-    printf("Watch the on-screen text for explanations!\n");
-    printf("Scroll mouse wheel to zoom in/out\n\n");
+    // Try to load a system font
+    const char* fontPaths[] = {
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",  // Linux
+        "/System/Library/Fonts/Helvetica.ttc",              // macOS
+        "C:\\Windows\\Fonts\\arial.ttf",                    // Windows
+        NULL
+    };
+
+    for (int i = 0; fontPaths[i]; i++) {
+        if (loadFont(fontPaths[i])) {
+            printf("Loaded font: %s\n", fontPaths[i]);
+            break;
+        }
+    }
+
+    if (!fontBuffer) {
+        printf("Warning: Could not load system font, text will not be rendered\n");
+    }
 
     while (!glfwWindowShouldClose(window)) {
         float time = glfwGetTime();
@@ -575,8 +667,6 @@ int main() {
         glTranslatef(0, cameraY, -10.0f / zoom);  // Pull back more
         glRotatef(30.0f, 1, 0, 0);  // Tilt down more to see action
         glRotatef(0.0f, 0, 1, 0);  // No rotation - keep it stable
-
-        // (Debug output removed - now shown on-screen)
 
         // Draw attention links between tokens at current layer
         if (currentLayer > 0 && currentLayer % 2 == 1 && layerBlend > 0.2f) {
@@ -634,29 +724,93 @@ int main() {
             }
         }
 
-        // Draw token words below layer 0 and embedding vectors
+        // Draw token words below layer 0 using TrueType font
         float wordY = tokenPositions[0][0].y - 1.5f;  // Much further below layer 0
+
+        if (fontBuffer) {
+            // Switch to 2D to draw text billboards
+            int width, height;
+            glfwGetFramebufferSize(window, &width, &height);
+
+            for (int i = 0; i < NUM_TOKENS; i++) {
+                Vec3 wordPos = tokenPositions[i][0];
+                wordPos.y = wordY;
+
+                // Project 3D position to screen space
+                float modelview[16], projection[16];
+
+                glGetFloatv(GL_MODELVIEW_MATRIX, modelview);
+                glGetFloatv(GL_PROJECTION_MATRIX, projection);
+
+                // Manual projection (simplified)
+                float x = wordPos.x;
+                float y = wordPos.y;
+                float z = wordPos.z;
+
+                // Transform by modelview
+                float mx = modelview[0]*x + modelview[4]*y + modelview[8]*z + modelview[12];
+                float my = modelview[1]*x + modelview[5]*y + modelview[9]*z + modelview[13];
+                float mz = modelview[2]*x + modelview[6]*y + modelview[10]*z + modelview[14];
+                float mw = modelview[3]*x + modelview[7]*y + modelview[11]*z + modelview[15];
+
+                // Transform by projection
+                float px = projection[0]*mx + projection[4]*my + projection[8]*mz + projection[12]*mw;
+                float py = projection[1]*mx + projection[5]*my + projection[9]*mz + projection[13]*mw;
+                float pw = projection[3]*mx + projection[7]*my + projection[11]*mz + projection[15]*mw;
+
+                if (pw != 0) {
+                    px /= pw;
+                    py /= pw;
+
+                    // Convert to screen coordinates
+                    float screenX = (px + 1.0f) * width / 2.0f;
+                    float screenY = (1.0f - py) * height / 2.0f;
+
+                    // Draw text at screen position
+                    setupTextOverlay(width, height);
+
+                    // Calculate text width to center it
+                    float scale = stbtt_ScaleForPixelHeight(&font, 48);
+                    float textWidth = 0;
+                    for (int j = 0; tokens[i].label[j]; j++) {
+                        int advance, lsb;
+                        stbtt_GetCodepointHMetrics(&font, tokens[i].label[j], &advance, &lsb);
+                        textWidth += advance * scale;
+                    }
+
+                    drawText(tokens[i].label, screenX - textWidth/2, screenY, 48,
+                            tokens[i].r * 1.2f, tokens[i].g * 1.2f, tokens[i].b * 1.2f, 1.0f);
+
+                    restoreFromTextOverlay();
+                }
+            }
+        } else {
+            // Fallback to old block letters if no font loaded
+            for (int i = 0; i < NUM_TOKENS; i++) {
+                Vec3 wordPos = tokenPositions[i][0];
+                wordPos.y = wordY;
+
+                glColor4f(tokens[i].r * 1.5f, tokens[i].g * 1.5f, tokens[i].b * 1.5f, 1.0f);
+                float wordSize = 0.6f;
+
+                int letterCount = 0;
+                for (int j = 0; tokens[i].label[j] != '\0'; j++) letterCount++;
+                float wordWidth = wordSize * 0.7f * letterCount;
+
+                drawWord(tokens[i].label, wordPos.x - wordWidth / 2, wordPos.y, wordPos.z, wordSize);
+            }
+        }
+
+        // Draw the embedding vectors
         for (int i = 0; i < NUM_TOKENS; i++) {
             Vec3 wordPos = tokenPositions[i][0];
             wordPos.y = wordY;
-
-            // Draw the word label - MASSIVE and bright
-            glColor4f(tokens[i].r * 1.5f, tokens[i].g * 1.5f, tokens[i].b * 1.5f, 1.0f);
-            float wordSize = 0.6f;  // MASSIVE text
-
-            // Calculate actual word width based on letter count
-            int letterCount = 0;
-            for (int j = 0; tokens[i].label[j] != '\0'; j++) letterCount++;
-            float wordWidth = wordSize * 0.7f * letterCount;  // Use actual spacing
-
-            drawWord(tokens[i].label, wordPos.x - wordWidth / 2, wordPos.y, wordPos.z, wordSize);
-
-            // Draw embedding vector (word -> layer 0 position)
             Vec3 embeddingPos = tokenPositions[i][0];
+
             glLineWidth(3.0f);
             glBegin(GL_LINES);
             glColor4f(tokens[i].r * 0.8f, tokens[i].g * 0.8f, tokens[i].b * 0.8f, 0.7f);
-            glVertex3f(wordPos.x, wordPos.y + wordSize * 1.1f, wordPos.z);  // Top of word
+            glVertex3f(wordPos.x, wordPos.y + 0.3f, wordPos.z);  // Top of word area
             glColor4f(tokens[i].r, tokens[i].g, tokens[i].b, 0.9f);
             glVertex3f(embeddingPos.x, embeddingPos.y - 0.1f, embeddingPos.z);  // Just below layer 0 orb
             glEnd();
@@ -669,8 +823,8 @@ int main() {
             glVertex3f(embeddingPos.x - arrowSize, embeddingPos.y - 0.1f - arrowSize * 1.5f, embeddingPos.z);
             glVertex3f(embeddingPos.x + arrowSize, embeddingPos.y - 0.1f - arrowSize * 1.5f, embeddingPos.z);
             glEnd();
-            glLineWidth(2.0f);
         }
+        glLineWidth(2.0f);
 
         // Draw layer planes
         for (int layer = 0; layer <= currentLayer; layer++) {
@@ -718,51 +872,60 @@ int main() {
                 pos.z = pos.z + t * (nextPos.z - pos.z);
             }
 
-            // Orbs grow larger through layers (more refined representations)
+            // Orbs grow SLIGHTLY larger through layers (more refined representations)
             float layerProgress = (float)currentLayer / (float)(NUM_LAYERS - 1);
-            float baseSize = 0.08f + layerProgress * 0.08f;  // Grow from 0.08 to 0.16
+            float baseSize = 0.04f + layerProgress * 0.04f;  // Grow from 0.04 to 0.08 (half size)
 
-            // Pulsing glow effect
+            // Subtle pulsing glow effect
             float pulse = sinf(time * 2.0f + i) * 0.5f + 0.5f;
-            float glowRadius = baseSize * 2.0f + pulse * 0.03f;
+            float glowRadius = baseSize * 1.8f + pulse * 0.01f;
 
-            // Outer glow (more pronounced at higher layers)
-            float glowIntensity = 0.2f + layerProgress * 0.2f;
+            // Outer glow (subtle)
+            float glowIntensity = 0.15f + layerProgress * 0.15f;
             drawSphere(pos.x, pos.y, pos.z, glowRadius,
                       tokens[i].r, tokens[i].g, tokens[i].b, glowIntensity);
 
             // Core orb - brighter at higher layers
             float coreIntensity = 0.8f + layerProgress * 0.2f;
             drawSphere(pos.x, pos.y, pos.z, baseSize,
-                      tokens[i].r * coreIntensity, tokens[i].g * coreIntensity, tokens[i].b * coreIntensity, 1.0f);
+                      tokens[i].r * coreIntensity, tokens[i].g * coreIntensity, tokens[i].b * coreIntensity, 0.95f);
         }
 
         // Re-enable depth writes
         glDepthMask(GL_TRUE);
 
-        // Draw text overlay HUD - HUGE and simple
-        int width, height;
-        glfwGetFramebufferSize(window, &width, &height);
-        setupTextOverlay(width, height);
+        // Draw HUD text overlay with proper font
+        if (fontBuffer) {
+            int width, height;
+            glfwGetFramebufferSize(window, &width, &height);
+            setupTextOverlay(width, height);
 
-        // Simple status text - MUCH bigger
-        if (time < 3.0f) {
-            draw2DText("WORDS", 20, height - 60, 40, 0.3f, 1.0f, 1.0f, 0.9f);
-        } else if (currentLayer == 0) {
-            draw2DText("LAYER 0", 20, height - 60, 40, 0.5f, 1.0f, 0.5f, 0.9f);
-        } else if (currentLayer % 2 == 1) {
-            char layerText[20];
-            snprintf(layerText, sizeof(layerText), "LAYER %d", currentLayer);
-            draw2DText(layerText, 20, height - 60, 40, 0.3f, 0.5f, 1.0f, 0.9f);
-            draw2DText("ATTENTION", 20, height - 110, 30, 0.5f, 0.7f, 1.0f, 0.8f);
-        } else {
-            char layerText[20];
-            snprintf(layerText, sizeof(layerText), "LAYER %d", currentLayer);
-            draw2DText(layerText, 20, height - 60, 40, 1.0f, 0.5f, 0.2f, 0.9f);
-            draw2DText("FFN", 20, height - 110, 30, 1.0f, 0.7f, 0.4f, 0.8f);
+            // Title
+            drawText("TRANSFORMER RESIDUAL STREAM", 20, 30, 32, 1.0f, 1.0f, 1.0f, 0.9f);
+
+            // Current layer info
+            char layerInfo[128];
+            if (time < 3.0f) {
+                drawText("WORDS -> EMBEDDINGS", 20, 70, 28, 0.4f, 1.0f, 1.0f, 0.9f);
+                drawText("Look at the colored words at the bottom", 20, 105, 18, 0.8f, 0.8f, 0.8f, 0.8f);
+            } else if (currentLayer == 0) {
+                drawText("LAYER 0: Embeddings", 20, 70, 28, 0.5f, 1.0f, 0.5f, 0.9f);
+                drawText("Arrows point from words to embedding vectors", 20, 105, 18, 0.8f, 0.8f, 0.8f, 0.8f);
+            } else if (currentLayer % 2 == 1) {
+                snprintf(layerInfo, sizeof(layerInfo), "LAYER %d: Attention", currentLayer);
+                drawText(layerInfo, 20, 70, 28, 0.4f, 0.6f, 1.0f, 0.9f);
+                drawText("Blue links show tokens attending to each other", 20, 105, 18, 0.8f, 0.8f, 0.8f, 0.8f);
+            } else {
+                snprintf(layerInfo, sizeof(layerInfo), "LAYER %d: Feed-Forward (FFN)", currentLayer);
+                drawText(layerInfo, 20, 70, 28, 1.0f, 0.6f, 0.3f, 0.9f);
+                drawText("Orange circles show non-linear transformations", 20, 105, 18, 0.8f, 0.8f, 0.8f, 0.8f);
+            }
+
+            // Instructions
+            drawText("Scroll to zoom", 20, height - 30, 16, 0.7f, 0.7f, 0.7f, 0.7f);
+
+            restoreFromTextOverlay();
         }
-
-        restoreFromTextOverlay();
 
         glfwSwapBuffers(window);
         glfwPollEvents();
