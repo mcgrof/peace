@@ -32,6 +32,9 @@ int isDragging = 0;
 double lastMouseX = 0;
 double lastMouseY = 0;
 
+// Animation pause state
+int isPaused = 0;
+
 // Token colors and labels
 typedef struct {
     float r, g, b;
@@ -55,6 +58,10 @@ Vec3 tokenPositions[NUM_TOKENS][NUM_LAYERS];
 float animationPhase = 0.0f;
 int currentLayer = 0;
 int currentForwardPass = 1;  // Which forward pass we're on (1-5)
+float animationSpeed = 0.01f;  // Adjustable speed multiplier
+
+// Simulated attention weights for visualization (Q @ K^T result)
+float attentionWeights[NUM_TOKENS][NUM_TOKENS];
 
 // Font rendering
 stbtt_fontinfo font;
@@ -90,6 +97,22 @@ void cursor_position_callback(GLFWwindow* window, double xpos, double ypos) {
 
         lastMouseX = xpos;
         lastMouseY = ypos;
+    }
+}
+
+void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) {
+    if (key == GLFW_KEY_SPACE && action == GLFW_PRESS) {
+        isPaused = !isPaused;
+    }
+
+    // Speed control with arrow keys
+    if (key == GLFW_KEY_RIGHT && (action == GLFW_PRESS || action == GLFW_REPEAT)) {
+        animationSpeed *= 1.2f;  // Speed up by 20%
+        if (animationSpeed > 0.1f) animationSpeed = 0.1f;  // Max speed
+    }
+    if (key == GLFW_KEY_LEFT && (action == GLFW_PRESS || action == GLFW_REPEAT)) {
+        animationSpeed /= 1.2f;  // Slow down by 20%
+        if (animationSpeed < 0.001f) animationSpeed = 0.001f;  // Min speed
     }
 }
 
@@ -627,6 +650,344 @@ void drawLayerPlane(int layer, float alpha) {
     // Layer number will be drawn as billboard text later
 }
 
+void computeAttentionWeights(int layer, int numTokens) {
+    // Simulate attention weights based on token positions
+    // In real transformers, this is softmax(Q @ K^T / sqrt(d_k))
+    for (int i = 0; i < numTokens; i++) {
+        float rowSum = 0.0f;
+        for (int j = 0; j <= i; j++) {  // Causal masking: only attend to past
+            Vec3 qi = tokenPositions[i][layer];
+            Vec3 kj = tokenPositions[j][layer];
+
+            // Simulated dot product (distance-based for visualization)
+            float dx = qi.x - kj.x;
+            float dy = qi.y - kj.y;
+            float dz = qi.z - kj.z;
+            float dist = sqrtf(dx*dx + dy*dy + dz*dz);
+
+            // Convert distance to attention score (closer = higher attention)
+            // Add some bias towards recent tokens
+            float recency_bias = (i == j) ? 2.0f : (i - j <= 2) ? 1.5f : 1.0f;
+            attentionWeights[i][j] = expf(-dist * 2.0f) * recency_bias;
+            rowSum += attentionWeights[i][j];
+        }
+
+        // Normalize to sum to 1.0 (softmax)
+        for (int j = 0; j <= i; j++) {
+            attentionWeights[i][j] /= rowSum;
+        }
+
+        // Future tokens are masked (causal attention)
+        for (int j = i + 1; j < NUM_TOKENS; j++) {
+            attentionWeights[i][j] = 0.0f;
+        }
+    }
+}
+
+void drawAttentionMatrix(int layer, int numTokens, float alpha) {
+    // Draw the attention matrix as a 3D heatmap grid
+    float y = tokenPositions[0][layer].y;
+    float gridSize = 1.5f;
+    float cellSize = gridSize / NUM_TOKENS;
+    float gridX = 2.5f;  // Position to the side
+    float gridZ = 0.0f;
+
+    // Draw grid cells
+    for (int i = 0; i < numTokens; i++) {
+        for (int j = 0; j <= i; j++) {  // Only show lower triangle (causal)
+            float weight = attentionWeights[i][j];
+
+            // Position of this cell
+            float cx = gridX + j * cellSize;
+            float cz = gridZ - i * cellSize;
+
+            // Color based on attention weight (hot = high attention)
+            float r = weight * 1.5f;
+            float g = weight * 0.5f;
+            float b = weight * 0.2f;
+
+            // Draw filled quad for this cell
+            glBegin(GL_QUADS);
+            glColor4f(r, g, b, alpha * weight * 0.8f);
+            glVertex3f(cx, y + 0.3f, cz);
+            glVertex3f(cx + cellSize, y + 0.3f, cz);
+            glVertex3f(cx + cellSize, y + 0.3f, cz - cellSize);
+            glVertex3f(cx, y + 0.3f, cz - cellSize);
+            glEnd();
+
+            // Draw cell border
+            glLineWidth(1.0f);
+            glBegin(GL_LINE_LOOP);
+            glColor4f(1.0f, 1.0f, 1.0f, alpha * 0.3f);
+            glVertex3f(cx, y + 0.3f, cz);
+            glVertex3f(cx + cellSize, y + 0.3f, cz);
+            glVertex3f(cx + cellSize, y + 0.3f, cz - cellSize);
+            glVertex3f(cx, y + 0.3f, cz - cellSize);
+            glEnd();
+            glLineWidth(2.0f);
+        }
+    }
+}
+
+void drawQKVVectors(int tokenIdx, int layer, float phase) {
+    Vec3 pos = tokenPositions[tokenIdx][layer];
+    float vecLen = 0.3f;
+
+    // Q vector (blue ray pointing forward)
+    glLineWidth(3.0f);
+    glBegin(GL_LINES);
+    glColor4f(0.3f, 0.5f, 1.0f, 0.7f * phase);
+    glVertex3f(pos.x, pos.y, pos.z);
+    glColor4f(0.5f, 0.7f, 1.0f, 0.9f * phase);
+    glVertex3f(pos.x + vecLen, pos.y + vecLen * 0.3f, pos.z);
+    glEnd();
+
+    // K vector (green ray pointing left)
+    glBegin(GL_LINES);
+    glColor4f(0.3f, 1.0f, 0.5f, 0.7f * phase);
+    glVertex3f(pos.x, pos.y, pos.z);
+    glColor4f(0.5f, 1.0f, 0.7f, 0.9f * phase);
+    glVertex3f(pos.x - vecLen * 0.5f, pos.y + vecLen * 0.3f, pos.z + vecLen * 0.5f);
+    glEnd();
+
+    // V vector (orange ray pointing up-right)
+    glBegin(GL_LINES);
+    glColor4f(1.0f, 0.6f, 0.2f, 0.7f * phase);
+    glVertex3f(pos.x, pos.y, pos.z);
+    glColor4f(1.0f, 0.8f, 0.4f, 0.9f * phase);
+    glVertex3f(pos.x + vecLen * 0.3f, pos.y + vecLen * 0.5f, pos.z - vecLen * 0.3f);
+    glEnd();
+
+    glLineWidth(2.0f);
+}
+
+void drawAttentionConnections(int queryIdx, int layer, int numTokens, float alpha) {
+    // Draw lines from query token to key tokens, thickness = attention weight
+    Vec3 query = tokenPositions[queryIdx][layer];
+
+    for (int j = 0; j <= queryIdx; j++) {
+        float weight = attentionWeights[queryIdx][j];
+        if (weight < 0.05f) continue;  // Skip very weak connections
+
+        Vec3 key = tokenPositions[j][layer];
+
+        // Line width proportional to attention weight
+        glLineWidth(1.0f + weight * 6.0f);
+
+        glBegin(GL_LINES);
+        glColor4f(0.4f, 0.8f, 1.0f, alpha * weight * 0.6f);
+        glVertex3f(query.x, query.y, query.z);
+        glColor4f(0.6f, 1.0f, 1.0f, alpha * weight * 0.3f);
+        glVertex3f(key.x, key.y, key.z);
+        glEnd();
+    }
+
+    glLineWidth(2.0f);
+}
+
+void drawMatrixMultiplicationPanel(int width, int height, int numTokens, float phase, Token* tokens) {
+    // Draw a detailed panel showing Q @ K^T matrix math
+    setupTextOverlay(width, height);
+
+    int leftX = 40;
+    int startY = 300;
+    int lineH = 50;
+
+    float alpha = phase;
+
+    // Title
+    drawText("Q @ K^T: CROSS-TOKEN MATH", leftX, startY, 48, 1.0f, 1.0f, 0.4f, alpha);
+    startY += 80;
+
+    // Show example with 3 tokens
+    int exampleTokens = (numTokens >= 3) ? 3 : numTokens;
+
+    // Q matrix (each token has a query)
+    drawText("Q (queries):", leftX, startY, 36, 0.5f, 0.8f, 1.0f, alpha);
+    startY += lineH;
+
+    for (int i = 0; i < exampleTokens; i++) {
+        char qRow[128];
+        snprintf(qRow, sizeof(qRow), "%s: [0.8 0.3 0.5]", tokens[i].label);
+        drawText(qRow, leftX + 20, startY, 32, tokens[i].r, tokens[i].g, tokens[i].b, alpha * 0.9f);
+        startY += lineH - 5;
+    }
+
+    startY += 20;
+
+    // K^T matrix (transposed keys)
+    drawText("K^T (keys transposed):", leftX, startY, 36, 0.5f, 1.0f, 0.8f, alpha);
+    startY += lineH;
+
+    char ktHeader[128];
+    snprintf(ktHeader, sizeof(ktHeader), "     %s   %s   %s",
+             tokens[0].label, exampleTokens > 1 ? tokens[1].label : "",
+             exampleTokens > 2 ? tokens[2].label : "");
+    drawText(ktHeader, leftX + 20, startY, 28, 0.7f, 0.7f, 0.7f, alpha * 0.9f);
+    startY += lineH - 10;
+
+    // Show K^T as columns
+    const char* ktRows[] = {"[0.9  0.2  0.1]", "[0.1  0.8  0.3]", "[0.4  0.5  0.9]"};
+    for (int i = 0; i < 3; i++) {
+        drawText(ktRows[i], leftX + 20, startY, 28, 0.8f, 0.8f, 0.8f, alpha * 0.8f);
+        startY += lineH - 15;
+    }
+
+    startY += 30;
+
+    // The multiplication
+    drawText("=", leftX, startY, 42, 1.0f, 1.0f, 1.0f, alpha);
+    startY += lineH + 10;
+
+    // Result: Attention Scores (before softmax)
+    drawText("Scores (Q @ K^T):", leftX, startY, 36, 1.0f, 0.7f, 0.3f, alpha);
+    startY += lineH;
+
+    char scoreHeader[128];
+    snprintf(scoreHeader, sizeof(scoreHeader), "       %s    %s    %s",
+             tokens[0].label, exampleTokens > 1 ? tokens[1].label : "",
+             exampleTokens > 2 ? tokens[2].label : "");
+    drawText(scoreHeader, leftX + 20, startY, 28, 0.7f, 0.7f, 0.7f, alpha * 0.9f);
+    startY += lineH - 10;
+
+    // Show example scores
+    for (int i = 0; i < exampleTokens; i++) {
+        char scoreRow[128];
+        if (i == 0) {
+            snprintf(scoreRow, sizeof(scoreRow), "%s: [0.85   -∞    -∞ ]", tokens[i].label);
+        } else if (i == 1) {
+            snprintf(scoreRow, sizeof(scoreRow), "%s: [0.34  0.67   -∞ ]", tokens[i].label);
+        } else {
+            snprintf(scoreRow, sizeof(scoreRow), "%s: [0.52  0.61  0.91]", tokens[i].label);
+        }
+        drawText(scoreRow, leftX + 20, startY, 30, tokens[i].r, tokens[i].g, tokens[i].b, alpha * 0.9f);
+        startY += lineH - 5;
+    }
+
+    startY += 20;
+    drawText("(Future masked to -∞)", leftX + 20, startY, 26, 0.6f, 0.6f, 0.6f, alpha * 0.7f);
+
+    restoreFromTextOverlay();
+}
+
+void drawSoftmaxPanel(int width, int height, int numTokens, float phase, Token* tokens) {
+    // Show softmax transformation
+    setupTextOverlay(width, height);
+
+    int leftX = 40;
+    int startY = 300;
+    int lineH = 50;
+
+    float alpha = phase;
+
+    // Title
+    drawText("SOFTMAX: SCORES → PROBABILITIES", leftX, startY, 48, 1.0f, 0.8f, 1.0f, alpha);
+    startY += 80;
+
+    int exampleTokens = (numTokens >= 3) ? 3 : numTokens;
+
+    drawText("Attention Weights (after softmax):", leftX, startY, 36, 1.0f, 0.9f, 0.4f, alpha);
+    startY += lineH;
+
+    char header[128];
+    snprintf(header, sizeof(header), "       %s    %s    %s",
+             tokens[0].label, exampleTokens > 1 ? tokens[1].label : "",
+             exampleTokens > 2 ? tokens[2].label : "");
+    drawText(header, leftX + 20, startY, 28, 0.7f, 0.7f, 0.7f, alpha * 0.9f);
+    startY += lineH - 10;
+
+    // Show softmax results (probabilities sum to 1)
+    for (int i = 0; i < exampleTokens; i++) {
+        char probRow[128];
+        if (i == 0) {
+            snprintf(probRow, sizeof(probRow), "%s: [1.00  0.00  0.00]  ← only sees self", tokens[i].label);
+        } else if (i == 1) {
+            snprintf(probRow, sizeof(probRow), "%s: [0.45  0.55  0.00]  ← sees THE,DOG", tokens[i].label);
+        } else {
+            snprintf(probRow, sizeof(probRow), "%s: [0.23  0.28  0.49]  ← sees all 3", tokens[i].label);
+        }
+        drawText(probRow, leftX + 20, startY, 30, tokens[i].r, tokens[i].g, tokens[i].b, alpha * 0.9f);
+        startY += lineH - 5;
+    }
+
+    startY += 30;
+    drawText("Each row sums to 1.0", leftX + 20, startY, 32, 0.8f, 1.0f, 0.8f, alpha * 0.8f);
+    startY += lineH;
+    drawText("= probability distribution", leftX + 20, startY, 32, 0.8f, 1.0f, 0.8f, alpha * 0.8f);
+
+    startY += 60;
+    drawText("Token attends to context based", leftX, startY, 28, 0.7f, 0.7f, 0.7f, alpha * 0.7f);
+    startY += lineH - 10;
+    drawText("on these probabilities:", leftX, startY, 28, 0.7f, 0.7f, 0.7f, alpha * 0.7f);
+
+    restoreFromTextOverlay();
+}
+
+void drawVocabProjectionPanel(int width, int height, int numTokens, float phase, Token* tokens) {
+    // Show final vocab projection to predict next token
+    setupTextOverlay(width, height);
+
+    int leftX = 40;
+    int startY = 300;
+    int lineH = 50;
+
+    float alpha = phase;
+
+    // Title
+    drawText("FINAL LAYER: PREDICT NEXT TOKEN", leftX, startY, 48, 0.4f, 1.0f, 1.0f, alpha);
+    startY += 80;
+
+    drawText("Last token's hidden state:", leftX, startY, 36, 1.0f, 1.0f, 0.8f, alpha);
+    startY += lineH;
+
+    if (numTokens > 0) {
+        char hiddenState[128];
+        snprintf(hiddenState, sizeof(hiddenState), "%s: [0.42, 0.81, ..., 0.23]  (768 dims)",
+                 tokens[numTokens - 1].label);
+        drawText(hiddenState, leftX + 20, startY, 32,
+                 tokens[numTokens - 1].r, tokens[numTokens - 1].g, tokens[numTokens - 1].b, alpha * 0.9f);
+    }
+    startY += lineH + 20;
+
+    drawText("↓", leftX + 200, startY, 48, 1.0f, 1.0f, 1.0f, alpha);
+    startY += lineH + 10;
+
+    drawText("Project to vocabulary (50,304 tokens)", leftX, startY, 32, 1.0f, 0.9f, 0.5f, alpha);
+    startY += lineH;
+
+    drawText("hidden @ W_vocab  →  logits[50304]", leftX + 20, startY, 28, 0.8f, 0.8f, 0.8f, alpha * 0.8f);
+    startY += lineH + 20;
+
+    drawText("↓", leftX + 200, startY, 48, 1.0f, 1.0f, 1.0f, alpha);
+    startY += lineH + 10;
+
+    drawText("Softmax → Probabilities:", leftX, startY, 32, 1.0f, 0.8f, 1.0f, alpha);
+    startY += lineH;
+
+    // Example top predictions
+    const char* vocabExamples[] = {
+        "\"the\"    → 0.23",
+        "\"and\"    → 0.18",
+        "\"on\"     → 0.15",
+        "\"a\"      → 0.12",
+        "\"in\"     → 0.08",
+        "...other 50,299 tokens"
+    };
+
+    for (int i = 0; i < 6; i++) {
+        float prob = (i < 5) ? 0.9f : 0.6f;
+        drawText(vocabExamples[i], leftX + 40, startY, 28, 0.9f * prob, 0.9f * prob, 0.9f * prob, alpha * 0.9f);
+        startY += lineH - 15;
+    }
+
+    startY += 30;
+    drawText("Sample from distribution", leftX, startY, 32, 0.5f, 1.0f, 0.5f, alpha * 0.9f);
+    startY += lineH - 5;
+    drawText("to pick next token!", leftX, startY, 32, 0.5f, 1.0f, 0.5f, alpha * 0.9f);
+
+    restoreFromTextOverlay();
+}
+
 int main() {
     if (!glfwInit()) {
         printf("Failed to initialize GLFW\n");
@@ -645,6 +1006,7 @@ int main() {
     glfwSetScrollCallback(window, scroll_callback);
     glfwSetMouseButtonCallback(window, mouse_button_callback);
     glfwSetCursorPosCallback(window, cursor_position_callback);
+    glfwSetKeyCallback(window, key_callback);
     glfwSwapInterval(1);
 
     // Initialize OpenGL
@@ -695,17 +1057,17 @@ int main() {
 
         // Animation: progress through layers
         // Pause at start to show the words
-        if (time < 3.0f) {
-            animationPhase = 0.0f;  // Hold at layer 0 for first 3 seconds
-        } else {
-            animationPhase += 0.02f;  // Slower
+        if (time < 5.0f) {
+            animationPhase = 0.0f;  // Hold at layer 0 for first 5 seconds
+        } else if (!isPaused) {
+            animationPhase += animationSpeed;  // User-adjustable speed!
         }
 
         // Simple autoregressive: cycle through forward passes
         // Each forward pass goes through all 6 layers, then moves to next pass
-        float LAYER_TIME = 1.0f;  // 1 second per layer
-        float PASS_TIME = NUM_LAYERS * LAYER_TIME;  // Time per forward pass = 6 seconds
-        float TOTAL_TIME = NUM_TOKENS * PASS_TIME;  // Total animation cycle = 30 seconds
+        float LAYER_TIME = 3.0f;  // 3 seconds per layer (was 1 second)
+        float PASS_TIME = NUM_LAYERS * LAYER_TIME;  // Time per forward pass = 18 seconds
+        float TOTAL_TIME = NUM_TOKENS * PASS_TIME;  // Total animation cycle = 90 seconds
 
         float cyclePhase = fmodf(animationPhase, TOTAL_TIME);
 
@@ -734,10 +1096,35 @@ int main() {
         glRotatef(0.0f, 0, 1, 0);  // No rotation - keep it stable
         glTranslatef(0, 0, cameraPanZ);  // Apply Z pan after rotation
 
-        // Draw LINEAR transformation vectors for attention layers
+        // Draw ATTENTION visualization: Q, K, V and the attention matrix
         if (currentLayer > 0 && currentLayer % 2 == 1 && layerBlend > 0.2f) {
-            // Attention layer - show LINEAR transformation with bold colored vectors
+            // Attention layer - show Q@K^T magic!
             float vectorAlpha = layerBlend * 0.8f;
+
+            // Compute attention weights for this layer
+            computeAttentionWeights(currentLayer, currentForwardPass);
+
+            // Phase 1 (early): Show Q, K, V vectors
+            if (layerBlend < 0.5f) {
+                float qkvPhase = layerBlend * 2.0f;  // 0->1 in first half
+                for (int i = 0; i < currentForwardPass; i++) {
+                    drawQKVVectors(i, currentLayer, qkvPhase);
+                }
+            }
+
+            // Phase 2 (middle): Show attention matrix forming
+            if (layerBlend >= 0.3f && layerBlend < 0.7f) {
+                float matrixPhase = (layerBlend - 0.3f) / 0.4f;  // 0->1
+                drawAttentionMatrix(currentLayer, currentForwardPass, matrixPhase * 0.9f);
+            }
+
+            // Phase 3 (late): Show attention connections
+            if (layerBlend >= 0.5f) {
+                float connectionPhase = (layerBlend - 0.5f) / 0.5f;  // 0->1
+                for (int i = 0; i < currentForwardPass; i++) {
+                    drawAttentionConnections(i, currentLayer, currentForwardPass, connectionPhase * 0.8f);
+                }
+            }
 
             // Only show tokens in current forward pass
             for (int i = 0; i < currentForwardPass; i++) {
@@ -1115,12 +1502,12 @@ int main() {
             setupTextOverlay(width, height);
 
             // Title
-            drawText("AUTOREGRESSIVE TRANSFORMER", 20, 30, 32, 1.0f, 1.0f, 1.0f, 0.9f);
+            drawText("AUTOREGRESSIVE TRANSFORMER", 20, 30, 56, 1.0f, 1.0f, 1.0f, 0.9f);
 
             // BIG DEBUG: Show current pass number
             char bigNum[16];
             snprintf(bigNum, sizeof(bigNum), "PASS: %d", currentForwardPass);
-            drawText(bigNum, width - 250, 30, 48, 1.0f, 0.0f, 0.0f, 1.0f);
+            drawText(bigNum, width - 300, 30, 72, 1.0f, 0.0f, 0.0f, 1.0f);
 
             // Show which forward pass we're on with DEBUG info
             char passInfo[256];
@@ -1133,34 +1520,204 @@ int main() {
                 }
                 snprintf(passInfo, sizeof(passInfo), "Forward Pass %d: [%s] -> Predicting: %s (phase: %.1f)",
                         currentForwardPass, inputSeq, tokens[currentForwardPass].label, animationPhase);
-                drawText(passInfo, 20, 70, 20, 1.0f, 1.0f, 0.4f, 0.9f);
-                drawText("(Bright tokens process in parallel through layers)", 20, 100, 16, 0.7f, 0.7f, 0.7f, 0.8f);
+                drawText(passInfo, 20, 100, 32, 1.0f, 1.0f, 0.4f, 0.9f);
+                drawText("(Bright tokens process in parallel through layers)", 20, 145, 26, 0.7f, 0.7f, 0.7f, 0.8f);
             } else {
                 snprintf(passInfo, sizeof(passInfo), "Forward Pass 5: Complete! (phase: %.1f)", animationPhase);
-                drawText(passInfo, 20, 70, 20, 0.5f, 1.0f, 0.5f, 0.9f);
+                drawText(passInfo, 20, 100, 32, 0.5f, 1.0f, 0.5f, 0.9f);
             }
 
             char layerInfo[128];
 
             // Current layer info
             if (time < 3.0f) {
-                drawText("WORDS -> EMBEDDINGS", 20, 130, 22, 0.4f, 1.0f, 1.0f, 0.9f);
-                drawText("Watch multiple forward passes, each with more tokens", 20, 160, 16, 0.8f, 0.8f, 0.8f, 0.8f);
+                drawText("WORDS -> EMBEDDINGS", 20, 190, 34, 0.4f, 1.0f, 1.0f, 0.9f);
+                drawText("Watch multiple forward passes, each with more tokens", 20, 235, 26, 0.8f, 0.8f, 0.8f, 0.8f);
             } else if (currentLayer == 0) {
-                drawText("LAYER 0: Embeddings", 20, 130, 22, 0.5f, 1.0f, 0.5f, 0.9f);
-                drawText("Converting words to vectors", 20, 160, 16, 0.8f, 0.8f, 0.8f, 0.8f);
+                drawText("LAYER 0: Embeddings", 20, 190, 34, 0.5f, 1.0f, 0.5f, 0.9f);
+                drawText("Converting words to vectors", 20, 235, 26, 0.8f, 0.8f, 0.8f, 0.8f);
             } else if (currentLayer % 2 == 1) {
                 snprintf(layerInfo, sizeof(layerInfo), "LAYER %d: Attention (LINEAR)", currentLayer);
-                drawText(layerInfo, 20, 130, 22, 0.4f, 0.6f, 1.0f, 0.9f);
-                drawText("Straight colored arrows = linear transformation", 20, 160, 16, 0.8f, 0.8f, 0.8f, 0.8f);
+                drawText(layerInfo, 20, 190, 34, 0.4f, 0.6f, 1.0f, 0.9f);
+                drawText("Straight colored arrows = linear transformation", 20, 235, 26, 0.8f, 0.8f, 0.8f, 0.8f);
             } else {
                 snprintf(layerInfo, sizeof(layerInfo), "LAYER %d: FFN (NON-LINEAR)", currentLayer);
-                drawText(layerInfo, 20, 130, 22, 1.0f, 0.6f, 0.3f, 0.9f);
-                drawText("Curved wavy trails = activation function (non-linear)", 20, 160, 16, 0.8f, 0.8f, 0.8f, 0.8f);
+                drawText(layerInfo, 20, 190, 34, 1.0f, 0.6f, 0.3f, 0.9f);
+                drawText("Curved wavy trails = activation function (non-linear)", 20, 235, 26, 0.8f, 0.8f, 0.8f, 0.8f);
             }
 
-            // Instructions
-            drawText("Scroll to zoom | Drag to pan", 20, height - 30, 16, 0.7f, 0.7f, 0.7f, 0.7f);
+            // Instructions and speed indicator
+            char instructions[256];
+            snprintf(instructions, sizeof(instructions),
+                     "Scroll: zoom | Drag: pan | Space: pause | ←→: speed (%.3fx)",
+                     animationSpeed / 0.01f);
+            drawText(instructions, 20, height - 30, 26, 0.7f, 0.7f, 0.7f, 0.7f);
+
+            // Speed bar indicator
+            float barX = 20;
+            float barY = height - 80;
+            float barWidth = 300;
+            float barHeight = 20;
+
+            // Background bar
+            glBegin(GL_QUADS);
+            glColor4f(0.2f, 0.2f, 0.2f, 0.7f);
+            glVertex2f(barX, barY);
+            glVertex2f(barX + barWidth, barY);
+            glVertex2f(barX + barWidth, barY + barHeight);
+            glVertex2f(barX, barY + barHeight);
+            glEnd();
+
+            // Speed indicator (filled portion)
+            float speedRatio = (animationSpeed - 0.001f) / (0.1f - 0.001f);  // 0 to 1
+            float fillWidth = barWidth * speedRatio;
+            glBegin(GL_QUADS);
+            glColor4f(0.3f, 0.8f, 1.0f, 0.9f);
+            glVertex2f(barX, barY);
+            glVertex2f(barX + fillWidth, barY);
+            glVertex2f(barX + fillWidth, barY + barHeight);
+            glVertex2f(barX, barY + barHeight);
+            glEnd();
+
+            // Border
+            glLineWidth(2.0f);
+            glBegin(GL_LINE_LOOP);
+            glColor4f(0.7f, 0.7f, 0.7f, 0.9f);
+            glVertex2f(barX, barY);
+            glVertex2f(barX + barWidth, barY);
+            glVertex2f(barX + barWidth, barY + barHeight);
+            glVertex2f(barX, barY + barHeight);
+            glEnd();
+
+            // Speed label
+            drawText("Speed:", barX, barY - 30, 22, 0.7f, 0.7f, 0.7f, 0.8f);
+
+            restoreFromTextOverlay();
+
+            // EDUCATIONAL PANELS on left side - HOLD STILL to read!
+            if (currentLayer > 0 && currentLayer % 2 == 1) {
+                // Attention layer - show Q@K^T explanation
+                if (layerBlend >= 0.1f && layerBlend < 0.6f) {
+                    // Fade in quickly, then HOLD
+                    float panelPhase = (layerBlend < 0.2f) ? (layerBlend - 0.1f) / 0.1f : 1.0f;
+                    drawMatrixMultiplicationPanel(width, height, currentForwardPass, panelPhase, tokens);
+                } else if (layerBlend >= 0.6f && layerBlend <= 1.0f) {
+                    // Softmax panel - also HOLD
+                    float panelPhase = (layerBlend < 0.7f) ? (layerBlend - 0.6f) / 0.1f : 1.0f;
+                    drawSoftmaxPanel(width, height, currentForwardPass, panelPhase, tokens);
+                }
+            } else if (currentLayer == NUM_LAYERS - 1 && layerBlend > 0.5f) {
+                // Final layer - show vocab projection and HOLD
+                float panelPhase = (layerBlend < 0.6f) ? (layerBlend - 0.5f) / 0.1f : 1.0f;
+                drawVocabProjectionPanel(width, height, currentForwardPass, panelPhase, tokens);
+            }
+
+            setupTextOverlay(width, height);
+
+            // RIGHT SIDE: Show transformer math details
+            int rightX = width - 850;
+            int rightY = 200;
+            int lineHeight = 76;
+
+            drawText("TRANSFORMER MATH", rightX, rightY, 68, 1.0f, 1.0f, 0.4f, 0.9f);
+            rightY += 100;
+
+            // Tokenization
+            drawText("1. Tokenization:", rightX, rightY, 52, 0.8f, 0.8f, 0.8f, 0.9f);
+            rightY += lineHeight;
+            for (int i = 0; i < currentForwardPass && i < NUM_TOKENS; i++) {
+                char tokenLine[64];
+                snprintf(tokenLine, sizeof(tokenLine), "  \"%s\" -> token[%d]", tokens[i].label, i);
+                drawText(tokenLine, rightX, rightY, 48, tokens[i].r, tokens[i].g, tokens[i].b, 0.8f);
+                rightY += lineHeight - 10;
+            }
+            rightY += 24;
+
+            // Embeddings (Layer 0)
+            if (currentLayer == 0) {
+                drawText("2. Embedding:", rightX, rightY, 52, 0.5f, 1.0f, 0.5f, 0.9f);
+                rightY += lineHeight;
+                drawText("  token[i] -> vec(512)", rightX, rightY, 48, 0.7f, 0.7f, 0.7f, 0.8f);
+                rightY += lineHeight;
+                drawText("  + positional encoding", rightX, rightY, 48, 0.7f, 0.7f, 0.7f, 0.8f);
+            }
+
+            // Attention layers
+            else if (currentLayer % 2 == 1) {
+                char attnHeader[64];
+                snprintf(attnHeader, sizeof(attnHeader), "2. Layer %d - Attention:", currentLayer);
+                drawText(attnHeader, rightX, rightY, 52, 0.4f, 0.6f, 1.0f, 0.9f);
+                rightY += lineHeight;
+
+                drawText("  Q, K, V = x @ W_q, W_k, W_v", rightX, rightY, 44, 0.7f, 0.7f, 0.7f, 0.8f);
+                rightY += lineHeight;
+
+                drawText("  scores = Q @ K.T", rightX, rightY, 44, 0.8f, 0.8f, 0.3f, 0.8f);
+                rightY += lineHeight;
+
+                drawText("  scores = scores / sqrt(d_k)", rightX, rightY, 44, 0.8f, 0.8f, 0.3f, 0.8f);
+                rightY += lineHeight;
+                drawText("    (d_k = 64, scaling factor)", rightX, rightY, 40, 0.6f, 0.6f, 0.6f, 0.7f);
+                rightY += lineHeight;
+
+                drawText("  attn_weights = softmax(scores)", rightX, rightY, 44, 0.8f, 0.5f, 0.8f, 0.8f);
+                rightY += lineHeight;
+                drawText("    (normalize to sum = 1.0)", rightX, rightY, 40, 0.6f, 0.6f, 0.6f, 0.7f);
+                rightY += lineHeight;
+
+                drawText("  output = attn_weights @ V", rightX, rightY, 44, 0.5f, 1.0f, 0.5f, 0.8f);
+                rightY += lineHeight;
+
+                char matrixSize[64];
+                snprintf(matrixSize, sizeof(matrixSize), "  Matrix: [%d x %d]", currentForwardPass, currentForwardPass);
+                drawText(matrixSize, rightX, rightY, 40, 0.6f, 0.6f, 0.8f, 0.7f);
+                rightY += lineHeight;
+                drawText("  Each token attends to ALL", rightX, rightY, 40, 0.9f, 0.9f, 0.4f, 0.8f);
+            }
+
+            // FFN layers
+            else if (currentLayer % 2 == 0 && currentLayer > 0) {
+                char ffnHeader[64];
+                snprintf(ffnHeader, sizeof(ffnHeader), "2. Layer %d - FFN:", currentLayer);
+                drawText(ffnHeader, rightX, rightY, 52, 1.0f, 0.6f, 0.3f, 0.9f);
+                rightY += lineHeight;
+
+                drawText("  hidden = x @ W1 + b1", rightX, rightY, 44, 0.7f, 0.7f, 0.7f, 0.8f);
+                rightY += lineHeight;
+
+                drawText("  hidden = ReLU(hidden)", rightX, rightY, 44, 1.0f, 0.5f, 0.2f, 0.8f);
+                rightY += lineHeight;
+                drawText("    (non-linear activation)", rightX, rightY, 40, 0.6f, 0.6f, 0.6f, 0.7f);
+                rightY += lineHeight;
+
+                drawText("  output = hidden @ W2 + b2", rightX, rightY, 44, 0.5f, 1.0f, 0.5f, 0.8f);
+                rightY += lineHeight;
+
+                drawText("  Per-token transformation", rightX, rightY, 40, 0.9f, 0.9f, 0.4f, 0.8f);
+            }
+
+            // Final prediction (when at last layer of a pass)
+            if (currentLayer == NUM_LAYERS - 1 && currentForwardPass < NUM_TOKENS) {
+                rightY += 40;
+                drawText("3. Prediction:", rightX, rightY, 52, 1.0f, 1.0f, 0.4f, 0.9f);
+                rightY += lineHeight;
+
+                drawText("  logits = output @ W_vocab", rightX, rightY, 44, 0.7f, 0.7f, 0.7f, 0.8f);
+                rightY += lineHeight;
+
+                drawText("  probs = softmax(logits)", rightX, rightY, 44, 0.8f, 0.5f, 0.8f, 0.8f);
+                rightY += lineHeight;
+
+                drawText("  next_token = argmax(probs)", rightX, rightY, 44, 0.5f, 1.0f, 0.5f, 0.8f);
+                rightY += lineHeight;
+
+                char prediction[64];
+                snprintf(prediction, sizeof(prediction), "  Predicted: \"%s\"", tokens[currentForwardPass].label);
+                drawText(prediction, rightX, rightY, 48,
+                        tokens[currentForwardPass].r * 1.3f,
+                        tokens[currentForwardPass].g * 1.3f,
+                        tokens[currentForwardPass].b * 1.3f, 0.9f);
+            }
 
             restoreFromTextOverlay();
         }
