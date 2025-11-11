@@ -105,14 +105,23 @@ void key_callback(GLFWwindow* window, int key, int scancode, int action, int mod
         isPaused = !isPaused;
     }
 
-    // Speed control with arrow keys
+    // Zoom control with +/- keys
+    if ((key == GLFW_KEY_EQUAL || key == GLFW_KEY_KP_ADD) && (action == GLFW_PRESS || action == GLFW_REPEAT)) {
+        zoom += 0.2f;  // Zoom in
+        if (zoom > 8.0f) zoom = 8.0f;
+    }
+    if ((key == GLFW_KEY_MINUS || key == GLFW_KEY_KP_SUBTRACT) && (action == GLFW_PRESS || action == GLFW_REPEAT)) {
+        zoom -= 0.2f;  // Zoom out
+        if (zoom < 0.5f) zoom = 0.5f;
+    }
+
+    // Animation scrubbing with arrow keys
     if (key == GLFW_KEY_RIGHT && (action == GLFW_PRESS || action == GLFW_REPEAT)) {
-        animationSpeed *= 1.2f;  // Speed up by 20%
-        if (animationSpeed > 0.1f) animationSpeed = 0.1f;  // Max speed
+        animationPhase += 0.5f;  // Fast forward
     }
     if (key == GLFW_KEY_LEFT && (action == GLFW_PRESS || action == GLFW_REPEAT)) {
-        animationSpeed /= 1.2f;  // Slow down by 20%
-        if (animationSpeed < 0.001f) animationSpeed = 0.001f;  // Min speed
+        animationPhase -= 0.5f;  // Rewind
+        if (animationPhase < 0.0f) animationPhase = 0.0f;
     }
 }
 
@@ -796,7 +805,7 @@ void drawMatrixMultiplicationPanel(int width, int height, int numTokens, float p
     float alpha = phase;
 
     // Title
-    drawText("Q @ K^T: CROSS-TOKEN MATH", leftX, startY, 48, 1.0f, 1.0f, 0.4f, alpha);
+    drawText("Q @ K.T: CROSS-TOKEN MATH", leftX, startY, 48, 1.0f, 1.0f, 0.4f, alpha);
     startY += 80;
 
     // Show example with 3 tokens
@@ -815,8 +824,8 @@ void drawMatrixMultiplicationPanel(int width, int height, int numTokens, float p
 
     startY += 20;
 
-    // K^T matrix (transposed keys)
-    drawText("K^T (keys transposed):", leftX, startY, 36, 0.5f, 1.0f, 0.8f, alpha);
+    // K.T matrix (transposed keys)
+    drawText("K.T (keys transposed):", leftX, startY, 36, 0.5f, 1.0f, 0.8f, alpha);
     startY += lineH;
 
     char ktHeader[128];
@@ -840,7 +849,7 @@ void drawMatrixMultiplicationPanel(int width, int height, int numTokens, float p
     startY += lineH + 10;
 
     // Result: Attention Scores (before softmax)
-    drawText("Scores (Q @ K^T):", leftX, startY, 36, 1.0f, 0.7f, 0.3f, alpha);
+    drawText("Scores (Q @ K.T):", leftX, startY, 36, 1.0f, 0.7f, 0.3f, alpha);
     startY += lineH;
 
     char scoreHeader[128];
@@ -854,9 +863,9 @@ void drawMatrixMultiplicationPanel(int width, int height, int numTokens, float p
     for (int i = 0; i < exampleTokens; i++) {
         char scoreRow[128];
         if (i == 0) {
-            snprintf(scoreRow, sizeof(scoreRow), "%s: [0.85   -∞    -∞ ]", tokens[i].label);
+            snprintf(scoreRow, sizeof(scoreRow), "%s: [0.85  -inf  -inf]", tokens[i].label);
         } else if (i == 1) {
-            snprintf(scoreRow, sizeof(scoreRow), "%s: [0.34  0.67   -∞ ]", tokens[i].label);
+            snprintf(scoreRow, sizeof(scoreRow), "%s: [0.34  0.67  -inf]", tokens[i].label);
         } else {
             snprintf(scoreRow, sizeof(scoreRow), "%s: [0.52  0.61  0.91]", tokens[i].label);
         }
@@ -865,7 +874,7 @@ void drawMatrixMultiplicationPanel(int width, int height, int numTokens, float p
     }
 
     startY += 20;
-    drawText("(Future masked to -∞)", leftX + 20, startY, 26, 0.6f, 0.6f, 0.6f, alpha * 0.7f);
+    drawText("(Future masked to -inf)", leftX + 20, startY, 26, 0.6f, 0.6f, 0.6f, alpha * 0.7f);
 
     restoreFromTextOverlay();
 }
@@ -881,7 +890,7 @@ void drawSoftmaxPanel(int width, int height, int numTokens, float phase, Token* 
     float alpha = phase;
 
     // Title
-    drawText("SOFTMAX: SCORES → PROBABILITIES", leftX, startY, 48, 1.0f, 0.8f, 1.0f, alpha);
+    drawText("SOFTMAX: SCORES -> PROBABILITIES", leftX, startY, 48, 1.0f, 0.8f, 1.0f, alpha);
     startY += 80;
 
     int exampleTokens = (numTokens >= 3) ? 3 : numTokens;
@@ -900,11 +909,11 @@ void drawSoftmaxPanel(int width, int height, int numTokens, float phase, Token* 
     for (int i = 0; i < exampleTokens; i++) {
         char probRow[128];
         if (i == 0) {
-            snprintf(probRow, sizeof(probRow), "%s: [1.00  0.00  0.00]  ← only sees self", tokens[i].label);
+            snprintf(probRow, sizeof(probRow), "%s: [1.00  0.00  0.00]  < only sees self", tokens[i].label);
         } else if (i == 1) {
-            snprintf(probRow, sizeof(probRow), "%s: [0.45  0.55  0.00]  ← sees THE,DOG", tokens[i].label);
+            snprintf(probRow, sizeof(probRow), "%s: [0.45  0.55  0.00]  < sees THE,DOG", tokens[i].label);
         } else {
-            snprintf(probRow, sizeof(probRow), "%s: [0.23  0.28  0.49]  ← sees all 3", tokens[i].label);
+            snprintf(probRow, sizeof(probRow), "%s: [0.23  0.28  0.49]  < sees all 3", tokens[i].label);
         }
         drawText(probRow, leftX + 20, startY, 30, tokens[i].r, tokens[i].g, tokens[i].b, alpha * 0.9f);
         startY += lineH - 5;
@@ -949,28 +958,30 @@ void drawVocabProjectionPanel(int width, int height, int numTokens, float phase,
     }
     startY += lineH + 20;
 
-    drawText("↓", leftX + 200, startY, 48, 1.0f, 1.0f, 1.0f, alpha);
+    drawText("|", leftX + 200, startY, 48, 1.0f, 1.0f, 1.0f, alpha);
+    drawText("v", leftX + 200, startY + 20, 48, 1.0f, 1.0f, 1.0f, alpha);
     startY += lineH + 10;
 
     drawText("Project to vocabulary (50,304 tokens)", leftX, startY, 32, 1.0f, 0.9f, 0.5f, alpha);
     startY += lineH;
 
-    drawText("hidden @ W_vocab  →  logits[50304]", leftX + 20, startY, 28, 0.8f, 0.8f, 0.8f, alpha * 0.8f);
+    drawText("hidden @ W_vocab  ->  logits[50304]", leftX + 20, startY, 28, 0.8f, 0.8f, 0.8f, alpha * 0.8f);
     startY += lineH + 20;
 
-    drawText("↓", leftX + 200, startY, 48, 1.0f, 1.0f, 1.0f, alpha);
+    drawText("|", leftX + 200, startY, 48, 1.0f, 1.0f, 1.0f, alpha);
+    drawText("v", leftX + 200, startY + 20, 48, 1.0f, 1.0f, 1.0f, alpha);
     startY += lineH + 10;
 
-    drawText("Softmax → Probabilities:", leftX, startY, 32, 1.0f, 0.8f, 1.0f, alpha);
+    drawText("Softmax -> Probabilities:", leftX, startY, 32, 1.0f, 0.8f, 1.0f, alpha);
     startY += lineH;
 
     // Example top predictions
     const char* vocabExamples[] = {
-        "\"the\"    → 0.23",
-        "\"and\"    → 0.18",
-        "\"on\"     → 0.15",
-        "\"a\"      → 0.12",
-        "\"in\"     → 0.08",
+        "\"the\"    -> 0.23",
+        "\"and\"    -> 0.18",
+        "\"on\"     -> 0.15",
+        "\"a\"      -> 0.12",
+        "\"in\"     -> 0.08",
         "...other 50,299 tokens"
     };
 
@@ -1546,51 +1557,9 @@ int main() {
                 drawText("Curved wavy trails = activation function (non-linear)", 20, 235, 26, 0.8f, 0.8f, 0.8f, 0.8f);
             }
 
-            // Instructions and speed indicator
-            char instructions[256];
-            snprintf(instructions, sizeof(instructions),
-                     "Scroll: zoom | Drag: pan | Space: pause | ←→: speed (%.3fx)",
-                     animationSpeed / 0.01f);
-            drawText(instructions, 20, height - 30, 26, 0.7f, 0.7f, 0.7f, 0.7f);
-
-            // Speed bar indicator
-            float barX = 20;
-            float barY = height - 80;
-            float barWidth = 300;
-            float barHeight = 20;
-
-            // Background bar
-            glBegin(GL_QUADS);
-            glColor4f(0.2f, 0.2f, 0.2f, 0.7f);
-            glVertex2f(barX, barY);
-            glVertex2f(barX + barWidth, barY);
-            glVertex2f(barX + barWidth, barY + barHeight);
-            glVertex2f(barX, barY + barHeight);
-            glEnd();
-
-            // Speed indicator (filled portion)
-            float speedRatio = (animationSpeed - 0.001f) / (0.1f - 0.001f);  // 0 to 1
-            float fillWidth = barWidth * speedRatio;
-            glBegin(GL_QUADS);
-            glColor4f(0.3f, 0.8f, 1.0f, 0.9f);
-            glVertex2f(barX, barY);
-            glVertex2f(barX + fillWidth, barY);
-            glVertex2f(barX + fillWidth, barY + barHeight);
-            glVertex2f(barX, barY + barHeight);
-            glEnd();
-
-            // Border
-            glLineWidth(2.0f);
-            glBegin(GL_LINE_LOOP);
-            glColor4f(0.7f, 0.7f, 0.7f, 0.9f);
-            glVertex2f(barX, barY);
-            glVertex2f(barX + barWidth, barY);
-            glVertex2f(barX + barWidth, barY + barHeight);
-            glVertex2f(barX, barY + barHeight);
-            glEnd();
-
-            // Speed label
-            drawText("Speed:", barX, barY - 30, 22, 0.7f, 0.7f, 0.7f, 0.8f);
+            // Instructions
+            drawText("Drag: pan | +/-: zoom | Space: pause | Left/Right: rewind/forward",
+                     20, height - 30, 26, 0.7f, 0.7f, 0.7f, 0.7f);
 
             restoreFromTextOverlay();
 
